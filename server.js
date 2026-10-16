@@ -16,8 +16,28 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-/* ---------- Middleware ---------- */
-app.use(cors({ origin: '*', credentials: true }));
+/* ---------- CORS ---------- */
+const ALLOWED_ORIGINS = [
+  'https://chat-web.alimdrahul01.workers.dev',
+  'http://localhost:3000',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // Fallback: allow all (dev-friendly)
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+/* ---------- Body parsers ---------- */
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -32,7 +52,7 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-/* ---------- Routes ---------- */
+/* ---------- Root ---------- */
 app.get('/', (req, res) => {
   res.json({
     name: 'Nexus Backend',
@@ -48,6 +68,7 @@ app.get('/', (req, res) => {
   });
 });
 
+/* ---------- Routes ---------- */
 app.use('/api/health', healthRoute);
 app.use('/api/auth', authRoute);
 app.use('/api/tasks', taskRoute);
@@ -71,7 +92,6 @@ async function start() {
 
   await connectDB();
 
-  // HTTP server + Socket.io
   const httpServer = http.createServer(app);
   initChatSocket(httpServer);
 
