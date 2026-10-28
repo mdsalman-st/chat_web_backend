@@ -4,12 +4,11 @@ import dotenv from 'dotenv';
 import http from 'http';
 
 import { connectDB } from './config/db.js';
-import { initChatSocket } from './sockets/chatSocket.js';
 import healthRoute from './routes/health.js';
 import authRoute from './routes/auth.js';
 import taskRoute from './routes/tasks.js';
 import noteRoute from './routes/notes.js';
-import roomRoute from './routes/rooms.js';
+import testRoute from './routes/tests.js';
 
 dotenv.config();
 
@@ -63,7 +62,7 @@ app.get('/', (req, res) => {
       auth: '/api/auth',
       tasks: '/api/tasks',
       notes: '/api/notes',
-      rooms: '/api/rooms',
+      tests: '/api/tests',
     },
   });
 });
@@ -73,7 +72,7 @@ app.use('/api/health', healthRoute);
 app.use('/api/auth', authRoute);
 app.use('/api/tasks', taskRoute);
 app.use('/api/notes', noteRoute);
-app.use('/api/rooms', roomRoute);
+app.use('/api/tests', testRoute);
 
 /* ---------- 404 ---------- */
 app.use((req, res) => {
@@ -93,7 +92,6 @@ async function start() {
   await connectDB();
 
   const httpServer = http.createServer(app);
-  initChatSocket(httpServer);
 
   httpServer.listen(PORT, () => {
     console.log('\n═══════════════════════════════════════════');
@@ -102,8 +100,7 @@ async function start() {
     console.log(`  🔐 Auth:     http://localhost:${PORT}/api/auth`);
     console.log(`  📋 Tasks:    http://localhost:${PORT}/api/tasks`);
     console.log(`  📝 Notes:    http://localhost:${PORT}/api/notes`);
-    console.log(`  💬 Rooms:    http://localhost:${PORT}/api/rooms`);
-    console.log(`  🔌 Socket:   ws://localhost:${PORT}`);
+    console.log(`  🎓 Tests:    http://localhost:${PORT}/api/tests`);
     console.log('═══════════════════════════════════════════\n');
   });
 }

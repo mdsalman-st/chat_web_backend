@@ -33,7 +33,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['student', 'employee', 'trader', 'creator', 'developer', 'freelancer', 'teacher', 'doctor', 'other'],
+      enum: ['student', 'employee', 'trader', 'creator', 'developer', 'freelancer', 'teacher', 'doctor', 'admin', 'other'],
       default: 'student',
     },
     username: {
@@ -50,6 +50,27 @@ const userSchema = new mongoose.Schema(
     roleDetails: {
       type: Object,
       default: {},
+    },
+    studentProfile: {
+      board: { type: String, default: 'ncert_default' },
+      boardName: { type: String, default: 'NCERT Default' },
+      isOtherBoard: { type: Boolean, default: false },
+      otherBoardName: { type: String, default: '' },
+      classLevel: { type: String, default: '10' },
+      stream: { type: String, default: null },
+      streamName: { type: String, default: null },
+      medium: { type: String, enum: ['Hindi', 'English'], default: 'Hindi' },
+      selectedSubjects: [
+        {
+          code: String,
+          name: String,
+          hindiName: String,
+          icon: String,
+        },
+      ],
+      academicYear: { type: String, default: '2025-2026' },
+      targetGoal: { type: String, default: '' },
+      isProfileComplete: { type: Boolean, default: false },
     },
     lastLogin: Date,
   },
