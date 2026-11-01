@@ -9,6 +9,8 @@ import authRoute from './routes/auth.js';
 import taskRoute from './routes/tasks.js';
 import noteRoute from './routes/notes.js';
 import testRoute from './routes/tests.js';
+import subjectiveRoute from './routes/subjective.js';
+import paperRoute from './routes/paper.js';
 
 dotenv.config();
 
@@ -37,8 +39,8 @@ app.use(cors({
 }));
 
 /* ---------- Body parsers ---------- */
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 /* ---------- Request logger ---------- */
 if (process.env.NODE_ENV !== 'production') {
@@ -63,6 +65,9 @@ app.get('/', (req, res) => {
       tasks: '/api/tasks',
       notes: '/api/notes',
       tests: '/api/tests',
+      subjective: '/api/subjective',
+      admin: '/api/admin',
+      student: '/api/student',
     },
   });
 });
@@ -73,6 +78,9 @@ app.use('/api/auth', authRoute);
 app.use('/api/tasks', taskRoute);
 app.use('/api/notes', noteRoute);
 app.use('/api/tests', testRoute);
+app.use('/api/subjective', subjectiveRoute);
+app.use('/api/admin', paperRoute);
+app.use('/api/student', paperRoute);
 
 /* ---------- 404 ---------- */
 app.use((req, res) => {
@@ -101,6 +109,9 @@ async function start() {
     console.log(`  📋 Tasks:    http://localhost:${PORT}/api/tasks`);
     console.log(`  📝 Notes:    http://localhost:${PORT}/api/notes`);
     console.log(`  🎓 Tests:    http://localhost:${PORT}/api/tests`);
+    console.log(`  📄 Subjective: http://localhost:${PORT}/api/subjective`);
+    console.log(`  🛡️  Admin:     http://localhost:${PORT}/api/admin`);
+    console.log(`  🎒 Student:   http://localhost:${PORT}/api/student`);
     console.log('═══════════════════════════════════════════\n');
   });
 }

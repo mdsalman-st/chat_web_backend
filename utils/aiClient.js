@@ -56,7 +56,7 @@ async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(45000), // 45s timeout
+    signal: AbortSignal.timeout(25000), // 25s timeout
   });
 
   if (res.status === 429) {
@@ -133,6 +133,65 @@ async function callGroq(apiKey, prompt, systemInstruction) {
 /**
  * Unified AI JSON caller with full failover rotation
  */
+/**
+ * Call Gemini Vision API with a specific key (for image + text prompts)
+ */
+async function callGeminiVision(apiKey, keyIdentifier, imageBase64, mimeType, prompt, systemInstruction) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  const payload = {
+    contents: [{
+      parts: [
+        {
+          inline_data: {
+            mime_type: mimeType,
+            data: imageBase64,
+          },
+        },
+        { text: prompt },
+      ],
+    }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.2,
+    },
+  };
+
+  if (systemInstruction) {
+    payload.systemInstruction = {
+      parts: [{ text: systemInstruction }],
+    };
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15000), // 15s timeout for vision/OCR
+  });
+
+  if (res.status === 429) {
+    await recordKeyUsage(keyIdentifier, true, true);
+    throw new Error(`Gemini Vision ${keyIdentifier} Rate Limit (429)`);
+  }
+
+  if (!res.ok) {
+    await recordKeyUsage(keyIdentifier, false, true);
+    const errText = await res.text();
+    throw new Error(`Gemini Vision ${keyIdentifier} HTTP ${res.status}: ${errText.slice(0, 150)}`);
+  }
+
+  const data = await res.json();
+  await recordKeyUsage(keyIdentifier, false, false);
+
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error(`Gemini Vision ${keyIdentifier} returned empty content`);
+  }
+
+  return JSON.parse(text);
+}
+
 export async function executeAiJsonWithFailover({ prompt, systemInstruction = '', taskType = 'heavy' }) {
   const providers = [];
 
@@ -171,4 +230,38 @@ export async function executeAiJsonWithFailover({ prompt, systemInstruction = ''
   friendlyError.details = errors;
   friendlyError.status = 503;
   throw friendlyError;
+}
+
+/**
+ * Unified AI Vision JSON caller with failover (Gemini 1 -> 2 -> 3)
+ */
+export async function executeGeminiVisionWithFailover({ imageBase64, mimeType = 'image/jpeg', prompt, systemInstruction = '' }) {
+  const gemini1 = process.env.GEMINI_KEY_1;
+  const gemini2 = process.env.GEMINI_KEY_2;
+  const gemini3 = process.env.GEMINI_KEY_3;
+
+  const providers = [];
+  if (gemini1) providers.push({ name: 'gemini_1', fn: () => callGeminiVision(gemini1, 'gemini_1', imageBase64, mimeType, prompt, systemInstruction) });
+  if (gemini2) providers.push({ name: 'gemini_2', fn: () => callGeminiVision(gemini2, 'gemini_2', imageBase64, mimeType, prompt, systemInstruction) });
+  if (gemini3) providers.push({ name: 'gemini_3', fn: () => callGeminiVision(gemini3, 'gemini_3', imageBase64, mimeType, prompt, systemInstruction) });
+
+  if (providers.length === 0) {
+    throw new Error('No Gemini API keys configured for Vision OCR');
+  }
+
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      console.log(`🤖 Invoking Vision AI: ${provider.name}`);
+      const result = await provider.fn();
+      return { result, providerName: provider.name };
+    } catch (err) {
+      console.warn(`⚠️ Vision provider ${provider.name} failed: ${err.message}. Rotating…`);
+      errors.push(`${provider.name}: ${err.message}`);
+    }
+  }
+
+  const err = new Error('Handwriting Vision OCR failed across all API providers');
+  err.details = errors;
+  throw err;
 }
