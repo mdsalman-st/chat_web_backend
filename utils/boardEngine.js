@@ -85,7 +85,8 @@ export function getSubjectsForClass(boardConfig, classLevel, streamId) {
       // Default to first stream if not specified
       return cls.streams[0].subjects || [];
     }
-    const stream = cls.streams.find((s) => s.streamId === streamId);
+    const safeStreamId = String(streamId || '').toLowerCase().trim();
+    const stream = cls.streams.find((s) => String(s.streamId || '').toLowerCase().trim() === safeStreamId);
     return stream ? stream.subjects : [];
   }
 
