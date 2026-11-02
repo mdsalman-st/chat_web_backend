@@ -858,7 +858,10 @@ export async function queueTestAnalysis(req, res) {
 
 export async function ingestPaper(req, res) {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // FIX: Allow super_admin and admin
+    if (!['super_admin', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
 
     const { boardCode, classLevel, stream, subjectCode, subjectName, medium, year, examPhase, setCode, questions, sourceUrl, sourceCreditText, officialKeyUrl } = req.body;
 
@@ -892,7 +895,10 @@ export async function ingestPaper(req, res) {
 
 export async function matchPaper(req, res) {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // FIX: Allow super_admin and admin
+    if (!['super_admin', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const { paperId } = req.params;
     const results = await matchPaperQuestions(paperId);
     await applyMvviVviTags(paperId);
@@ -905,7 +911,10 @@ export async function matchPaper(req, res) {
 
 export async function generateMvviTags(req, res) {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // FIX: Allow super_admin and admin
+    if (!['super_admin', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const { paperId } = req.params;
     const result = await applyMvviVviTags(paperId);
     res.json({ success: true, message: 'MVVI/VVI tags calculated and applied', result });
@@ -1027,7 +1036,10 @@ export async function getPaperAnswers(req, res) {
 
 export async function getPendingReviewPapers(req, res) {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // FIX: Allow super_admin, admin, and subject_admin
+    if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const papers = await getPapersPendingReview();
     res.json({ success: true, count: papers.length, papers });
   } catch (err) {
@@ -1038,7 +1050,10 @@ export async function getPendingReviewPapers(req, res) {
 
 export async function reviewPaperMatch(req, res) {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    // FIX: Allow super_admin, admin, and subject_admin
+    if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
 
     const { paperId } = req.params;
     const { questionNumber, action } = req.body;

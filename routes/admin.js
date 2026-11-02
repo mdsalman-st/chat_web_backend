@@ -1,25 +1,35 @@
 import express from 'express';
-import { getUsers, promoteToAdmin } from '../controllers/adminController.js';
-// Agar tumhare paas protect middleware hai toh isko import karo (jo check karta hai login hai ya nahi)
-import { protect } from '../middleware/authMiddleware.js'; 
+import { protect } from '../middleware/authMiddleware.js'; // Ensure path is correct
+import { 
+  getAdminStats, 
+  getUsers, 
+  promoteToAdmin, 
+  revokeAdmin,
+  addNewBoard,
+  getFlaggedQuestions,
+  resolveFlag
+} from '../controllers/adminController.js';
 
 const router = express.Router();
 
 // ==========================================
-// USER MANAGEMENT ROUTES (Plan B)
+// ALL ROUTES PROTECTED BY AUTH MIDDLEWARE
 // ==========================================
+router.use(protect);
 
-// 1. Saare students ki list laane ke liye
-router.get('/users', protect, getUsers);
+// 1. Stats & Dashboard
+router.get('/stats', getAdminStats);
 
-// 2. Kisi student ko Admin banane ke liye
-router.put('/users/:userId/promote', protect, promoteToAdmin);
+// 2. User Management
+router.get('/users', getUsers);
+router.put('/users/:userId/promote', promoteToAdmin);
+router.put('/users/:userId/revoke', revokeAdmin);
 
-// ==========================================
-// (Optional) Baaki Admin Routes Yahan Add Kar Sakte Ho
-// ==========================================
-// Jaise: router.post('/papers/ingest', protect, ingestPaper);
-// Note: Tumhare testController me pehle se admin routes hain, 
-// agar wo routes/tests.js me hain toh unhe yahan move karne ki zaroorat nahi hai.
+// 3. Board Management
+router.post('/boards', addNewBoard);
+
+// 4. Flags Management
+router.get('/flags', getFlaggedQuestions);
+router.post('/flags/:flagId/resolve', resolveFlag);
 
 export default router;

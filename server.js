@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
+import helmet from 'helmet'; 
+import rateLimit from 'express-rate-limit'; 
+import mongoSanitize from 'express-mongo-sanitize'; 
 
 import { connectDB } from './config/db.js';
 import healthRoute from './routes/health.js';
@@ -11,16 +14,28 @@ import noteRoute from './routes/notes.js';
 import testRoute from './routes/tests.js';
 import subjectiveRoute from './routes/subjective.js';
 import paperRoute from './routes/paper.js';
-import adminRoute from './routes/admin.js'; // <-- NAYA IMPORT ADD KIYA
+import adminRoute from './routes/admin.js'; 
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-/* ---------- CORS ---------- */
+/* ---------- 0. CRITICAL SECURITY FIXES ---------- */
+// 1. Trust Proxy: Render/Heroku ke liye zaroori hai, warna Rate Limit kaam nahi karega
+app.set('trust proxy', 1);
+
+// 2. Hide Express signature: Hacker ko na pata chale ki backend Express/Node hai
+app.disable('x-powered-by');
+
+
+/* ---------- 1. SECURITY HEADERS (Helmet) ---------- */
+app.use(helmet());
+
+/* ---------- 2. CORS (Strict) ---------- */
 const ALLOWED_ORIGINS = [
   'https://chat-web.alimdrahul01.workers.dev',
+  'https://chatweb-olive-theta.vercel.app',
   'http://localhost:3000',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
@@ -28,20 +43,39 @@ const ALLOWED_ORIGINS = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, Postman)
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // Postman/Mobile
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    // Fallback: allow all (dev-friendly)
-    return callback(null, true);
+    // PRO FIX: Block unknown origins
+    return callback(new Error('CORS Policy: This origin is not allowed')); 
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-/* ---------- Body parsers ---------- */
+/* ---------- 3. BODY PARSERS & SANITIZATION ---------- */
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// PRO FIX: Prevent NoSQL Injection
+app.use(mongoSanitize()); 
+
+/* ---------- 4. RATE LIMITING (Anti-Brute Force) ---------- */
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+});
+// Apply rate limit to all requests (especially auth routes)
+app.use('/api', limiter);
+
+// Stricter limit for login/signup
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // Only 10 login attempts per 15 mins
+  message: { error: 'Too many login attempts. Please try again later.' }
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/signup', authLimiter);
 
 /* ---------- Request logger ---------- */
 if (process.env.NODE_ENV !== 'production') {
@@ -60,16 +94,7 @@ app.get('/', (req, res) => {
     name: 'Nexus Backend',
     status: 'running',
     version: '1.0.0',
-    endpoints: {
-      health: '/api/health',
-      auth: '/api/auth',
-      tasks: '/api/tasks',
-      notes: '/api/notes',
-      tests: '/api/tests',
-      subjective: '/api/subjective',
-      admin: '/api/admin',
-      student: '/api/student',
-    },
+    endpoints: { /* ... */ },
   });
 });
 
@@ -81,10 +106,8 @@ app.use('/api/notes', noteRoute);
 app.use('/api/tests', testRoute);
 app.use('/api/subjective', subjectiveRoute);
 
-// Admin Routes Setup
 app.use('/api/admin', paperRoute);
-app.use('/api/admin', adminRoute); // <-- NAYA ROUTE ADD KIYA (User Management ke liye)
-
+app.use('/api/admin', adminRoute); 
 app.use('/api/student', paperRoute);
 
 /* ---------- 404 ---------- */
@@ -95,29 +118,19 @@ app.use((req, res) => {
 /* ---------- Error handler ---------- */
 app.use((err, req, res, next) => {
   console.error('❌ Server error:', err);
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  // Don't leak stack traces in production
+  const msg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
+  res.status(err.status || 500).json({ error: msg });
 });
 
 /* ---------- Boot ---------- */
 async function start() {
   console.log('\n🚀 Starting Nexus Backend...\n');
-
   await connectDB();
-
   const httpServer = http.createServer(app);
 
   httpServer.listen(PORT, () => {
-    console.log('\n═══════════════════════════════════════════');
-    console.log(`  ✅ Server:   http://localhost:${PORT}`);
-    console.log(`  📡 Health:   http://localhost:${PORT}/api/health`);
-    console.log(`  🔐 Auth:     http://localhost:${PORT}/api/auth`);
-    console.log(`  📋 Tasks:    http://localhost:${PORT}/api/tasks`);
-    console.log(`  📝 Notes:    http://localhost:${PORT}/api/notes`);
-    console.log(`  🎓 Tests:    http://localhost:${PORT}/api/tests`);
-    console.log(`  📄 Subjective: http://localhost:${PORT}/api/subjective`);
-    console.log(`  🛡️  Admin:     http://localhost:${PORT}/api/admin`);
-    console.log(`  🎒 Student:   http://localhost:${PORT}/api/student`);
-    console.log('═══════════════════════════════════════════\n');
+    console.log(`\n✅ Server running on port ${PORT}\n`);
   });
 }
 

@@ -33,8 +33,17 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['student', 'employee', 'trader', 'creator', 'developer', 'freelancer', 'teacher', 'doctor', 'admin', 'other'],
+      enum: [
+        'student', 'employee', 'trader', 'creator', 'developer', 'freelancer', 
+        'teacher', 'doctor', 'admin', 'super_admin', 'subject_admin', 'other'
+      ],
       default: 'student',
+    },
+    assignedSubject: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true,
     },
     username: {
       type: String,
@@ -72,6 +81,22 @@ const userSchema = new mongoose.Schema(
       targetGoal: { type: String, default: '' },
       isProfileComplete: { type: Boolean, default: false },
     },
+
+    // ==========================================
+    // SECURITY FIELDS (Naye Add Kiye Hain)
+    // ==========================================
+    loginAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+    lockUntil: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+    // ==========================================
+
     lastLogin: Date,
   },
   {
@@ -84,6 +109,8 @@ userSchema.methods.toJSON = function () {
   delete obj.passwordHash;
   delete obj.salt;
   delete obj.secretCode;
+  delete obj.loginAttempts; // Security: Hide from API response
+  delete obj.lockUntil;     // Security: Hide from API response
   return obj;
 };
 

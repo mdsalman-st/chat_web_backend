@@ -15,7 +15,9 @@ export async function protect(req, res, next) {
     }
 
     const decoded = verifyToken(token);
-    const user = await User.findById(decoded.id);
+    
+    // FIX: Exclude sensitive fields for security and performance
+    const user = await User.findById(decoded.id).select('-passwordHash -salt -secretCode');
 
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
