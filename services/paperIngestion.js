@@ -332,7 +332,8 @@ export async function applyMvviVviTags(paperId) {
  * @param {Object} params - Filter parameters
  * @returns {Promise<Array>} - Available papers
  */
-export async function getAvailablePapers({ boardCode, classLevel, subjectCode, stream, medium }) {
+// FIXED: Added examPhase to destructuring
+export async function getAvailablePapers({ boardCode, classLevel, subjectCode, stream, medium, examPhase }) {
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth() + 1; // 1-12
   const currentYear = currentDate.getFullYear();
@@ -372,6 +373,8 @@ export async function getAvailablePapers({ boardCode, classLevel, subjectCode, s
   };
 
   if (stream) query.stream = stream;
+  
+  // FIXED: Now examPhase is defined, so this will work perfectly
   if (examPhase) query.examPhase = examPhase;
 
   const papers = await OfficialPaper.find(query)
