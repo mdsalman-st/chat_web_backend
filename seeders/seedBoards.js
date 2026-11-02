@@ -171,52 +171,7 @@ const BOARDS_DATA = [
         ],
       },
       {
-        classLevel: '11', name: 'Intermediate (Class 11)', hindiName: 'इंटरमीडिएट (कक्षा 11)', hasStreams: true, order: 2,
-        streams: [
-          {
-            streamId: 'science_pcm', name: 'I.Sc. Science (PCM)', hindiName: 'आई.एससी. (PCM)',
-            subjects: [
-              { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
-              { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
-              { code: 'math', name: 'Mathematics (गणित)', hindiName: 'गणित', icon: '📐', color: '#8b5cf6', order: 3 },
-              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
-              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#10b981', order: 5 },
-            ],
-          },
-          {
-            streamId: 'science_pcb', name: 'I.Sc. Science (PCB)', hindiName: 'आई.एससी. (PCB)',
-            subjects: [
-              { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
-              { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
-              { code: 'bio', name: 'Biology (जीव विज्ञान)', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
-              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
-              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
-            ],
-          },
-          {
-            streamId: 'commerce', name: 'Commerce (वाणिज्य)', hindiName: 'वाणिज्य',
-            subjects: [
-              { code: 'acc', name: 'Accountancy (लेखाशास्त्र)', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
-              { code: 'bst', name: 'Business Studies (व्यवसाय अध्ययन)', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
-              { code: 'eco', name: 'Economics (अर्थशास्त्र)', hindiName: 'अर्थशास्त्र', icon: '📈', color: '#f59e0b', order: 3 },
-              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
-              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
-            ],
-          },
-          {
-            streamId: 'arts', name: 'Arts / Humanities (कला)', hindiName: 'कला / मानविकी',
-            subjects: [
-              { code: 'hist', name: 'History (इतिहास)', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
-              { code: 'pol', name: 'Political Science (राजनीति विज्ञान)', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
-              { code: 'geo', name: 'Geography (भूगोल)', hindiName: 'भूगोल', icon: '🗺️', color: '#10b981', order: 3 },
-              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
-              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
-            ],
-          },
-        ],
-      },
-      {
-        classLevel: '12', name: 'Intermediate (Class 12)', hindiName: 'इंटरमीडिएट (कक्षा 12)', hasStreams: true, order: 3,
+        classLevel: '12', name: 'Intermediate (Class 12)', hindiName: 'इंटरमीडिएट (कक्षा 12)', hasStreams: true, order: 2,
         streams: [
           {
             streamId: 'science_pcm', name: 'I.Sc. Science (PCM)', hindiName: 'आई.एससी. (PCM)',
@@ -421,7 +376,6 @@ const BOARDS_DATA = [
 ];
 
 const SEED_CHAPTERS = [
-  // (Aapke chapters ka data bilkul same rahega, maine isko chheda nahi hai)
   // Class 10 Science (NCERT & Fallback)
   { boardCode: 'ncert_default', classLevel: '10', subjectCode: 'sci', chapterNumber: 1, title: 'Chemical Reactions and Equations', hindiTitle: 'रासायनिक अभिक्रियाएँ एवं समीकरण', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'ncert_default', classLevel: '10', subjectCode: 'sci', chapterNumber: 2, title: 'Acids, Bases and Salts', hindiTitle: 'अम्ल, क्षारक एवं लवण', phaseCutoff: 'quarterly', isLive: true },
@@ -458,16 +412,6 @@ const SEED_CHAPTERS = [
   { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 2, title: 'Electrostatic Potential and Capacitance', hindiTitle: 'स्थिरवैद्युत विभव तथा धारिता', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 3, title: 'Current Electricity', hindiTitle: 'विद्युत धारा', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 4, title: 'Moving Charges and Magnetism', hindiTitle: 'गतिमान आवेश और चुंबकत्व', phaseCutoff: 'half_yearly', isLive: true },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 5, title: 'Magnetism and Matter', hindiTitle: 'चुंबकत्व एवं द्रव्य', phaseCutoff: 'half_yearly', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 6, title: 'Electromagnetic Induction', hindiTitle: 'वैद्युतचुंबकीय प्रेरण', phaseCutoff: 'half_yearly', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 7, title: 'Alternating Current', hindiTitle: 'प्रत्यावर्ती धारा', phaseCutoff: 'half_yearly', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 8, title: 'Electromagnetic Waves', hindiTitle: 'वैद्युतचुंबकीय तरंगें', phaseCutoff: 'annual', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 9, title: 'Ray Optics and Optical Instruments', hindiTitle: 'किरण प्रकाशिकी एवं प्रकाशिक यंत्र', phaseCutoff: 'annual', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 10, title: 'Wave Optics', hindiTitle: 'तरंग प्रकाशिकी', phaseCutoff: 'annual', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 11, title: 'Dual Nature of Radiation and Matter', hindiTitle: 'विकिरण तथा द्रव्य की द्वैत प्रकृति', phaseCutoff: 'annual', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 12, title: 'Atoms', hindiTitle: 'परमाणु', phaseCutoff: 'annual', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 13, title: 'Nuclei', hindiTitle: 'नाभिक', phaseCutoff: 'annual', isLive: false },
-  { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 14, title: 'Semiconductor Electronics', hindiTitle: 'अर्धचालक इलेक्ट्रॉनिकी', phaseCutoff: 'annual', isLive: false },
 
   // BSEB specific chapters for Class 10 Science
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 1, title: 'रासायनिक अभिक्रियाएँ एवं समीकरण', hindiTitle: 'रासायनिक अभिक्रियाएँ एवं समीकरण', phaseCutoff: 'quarterly', isLive: true },
@@ -483,6 +427,25 @@ const SEED_CHAPTERS = [
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 11, title: 'विद्युत', hindiTitle: 'विद्युत', phaseCutoff: 'half_yearly', isLive: true },
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 12, title: 'विद्युत धारा के चुंबकीय प्रभाव', hindiTitle: 'विद्युत धारा के चुंबकीय प्रभाव', phaseCutoff: 'sent_up', isLive: false },
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 13, title: 'हमारा पर्यावरण', hindiTitle: 'हमारा पर्यावरण', phaseCutoff: 'annual', isLive: false },
+
+  // --- NAYE CHAPTERS: BSEB Class 12 Commerce (Accountancy, Business Studies, Economics) ---
+  // Accountancy (acc)
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'acc', stream: 'commerce', chapterNumber: 1, title: 'Accounting for Partnership Firms', hindiTitle: 'साझेदारी फर्मों के लिए लेखांकन', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'acc', stream: 'commerce', chapterNumber: 2, title: 'Reconstitution of Partnership', hindiTitle: 'साझेदारी का पुनर्गठन', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'acc', stream: 'commerce', chapterNumber: 3, title: 'Financial Statements of Partnership', hindiTitle: 'साझेदारी के वित्तीय विवरण', phaseCutoff: 'annual', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'acc', stream: 'commerce', chapterNumber: 4, title: 'Accounting for Share Capital', hindiTitle: 'शेयर पूंजी के लिए लेखांकन', phaseCutoff: 'annual', isLive: true },
+  
+  // Business Studies (bst)
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'bst', stream: 'commerce', chapterNumber: 1, title: 'Nature and Significance of Management', hindiTitle: 'प्रबंधन की प्रकृति और महत्व', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'bst', stream: 'commerce', chapterNumber: 2, title: 'Principles of Management', hindiTitle: 'प्रबंधन के सिद्धांत', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'bst', stream: 'commerce', chapterNumber: 3, title: 'Business Environment', hindiTitle: 'व्यावसायिक वातावरण', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'bst', stream: 'commerce', chapterNumber: 4, title: 'Planning', hindiTitle: 'नियोजन', phaseCutoff: 'annual', isLive: true },
+
+  // Economics (eco)
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 1, title: 'Introduction to Microeconomics', hindiTitle: 'सूक्ष्मअर्थशास्त्र का परिचय', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 2, title: 'Theory of Consumer Behaviour', hindiTitle: 'उपभोक्ता व्यवहार का सिद्धांत', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 3, title: 'Production and Costs', hindiTitle: 'उत्पादन और लागत', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 4, title: 'Forms of Market and Price Determination', hindiTitle: 'बाजार के रूप और मूल्य निर्धारण', phaseCutoff: 'annual', isLive: true },
 ];
 
 export async function seedBoardConfigs() {

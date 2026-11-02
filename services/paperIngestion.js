@@ -88,8 +88,6 @@ export async function ingestOfficialPaper(paperData) {
 /**
  * Match official paper questions with existing Question bank
  * Uses text similarity to find corresponding questions
- * @param {string} paperId - OfficialPaper ID
- * @returns {Promise<Object>} - Matching results
  */
 export async function matchPaperQuestions(paperId) {
   const paper = await OfficialPaper.findById(paperId).lean();
@@ -107,7 +105,6 @@ export async function matchPaperQuestions(paperId) {
     unmatched: [],
   };
 
-  // Get existing questions for this board/class/subject/medium
   const existingQuestions = await Question.find({
     boardCode: paper.boardCode,
     classLevel: paper.classLevel,
@@ -117,7 +114,6 @@ export async function matchPaperQuestions(paperId) {
     status: 'verified',
   }).select('+correctOption +explanation').lean();
 
-  // Build lookup by question text for faster matching
   const existingByText = new Map();
   for (const q of existingQuestions) {
     const key = normalizeText(q.questionText);
@@ -134,10 +130,8 @@ export async function matchPaperQuestions(paperId) {
     let bestMatch = null;
     let bestScore = 0;
 
-    // Try exact match first
     if (existingByText.has(normalizedPaperText)) {
       const candidates = existingByText.get(normalizedPaperText);
-      // Verify correct option matches official key
       const exactMatch = candidates.find(c => 
         String(c.correctOption).toUpperCase() === String(paperQ.correctOption).toUpperCase()
       );
@@ -147,7 +141,6 @@ export async function matchPaperQuestions(paperId) {
       }
     }
 
-    // If no exact match, use fuzzy similarity
     if (!bestMatch) {
       for (const existingQ of existingQuestions) {
         const score = stringSimilarity(normalizedPaperText, normalizeText(existingQ.questionText));
@@ -159,7 +152,6 @@ export async function matchPaperQuestions(paperId) {
     }
 
     if (bestMatch && bestScore >= SIMILARITY_THRESHOLD_HIGH) {
-      // High confidence match - auto-approve
       results.matchedCount++;
       results.highConfidenceCount++;
       matchedQuestionIds.push(bestMatch._id);
@@ -172,7 +164,6 @@ export async function matchPaperQuestions(paperId) {
         existingCorrectOption: bestMatch.correctOption,
       });
     } else if (bestMatch && bestScore >= SIMILARITY_THRESHOLD_LOW) {
-      // Low confidence match - needs admin review
       results.matchedCount++;
       results.lowConfidenceCount++;
       results.pendingReviewCount++;
@@ -186,7 +177,6 @@ export async function matchPaperQuestions(paperId) {
         existingCorrectOption: bestMatch.correctOption,
       });
     } else {
-      // No match found
       results.unmatched.push({
         paperQuestionNumber: paperQ.questionNumber,
         questionText: paperQ.questionText,
@@ -195,7 +185,6 @@ export async function matchPaperQuestions(paperId) {
     }
   }
 
-  // Update paper with match results
   await OfficialPaper.findByIdAndUpdate(paperId, {
     $set: {
       matchedQuestionIds,
@@ -216,18 +205,11 @@ export async function matchPaperQuestions(paperId) {
 
 /**
  * Calculate MVVI/VVI tags deterministically based on frequency analysis
- * MVVI = Asked 3+ times in last 5 years
- * VVI = Asked 2 times in last 5 years
- * @param {string} boardCode - Board code
- * @param {string} classLevel - Class level
- * @param {string} subjectCode - Subject code
- * @returns {Promise<Array>} - Array of MVVI/VVI tags
  */
 export async function calculateMvviVviTags(boardCode, classLevel, subjectCode) {
   const currentYear = new Date().getFullYear();
   const fiveYearsAgo = currentYear - 5;
 
-  // Get all published official papers for this board/class/subject in last 5 years
   const papers = await OfficialPaper.find({
     boardCode: boardCode.toLowerCase(),
     classLevel: String(classLevel),
@@ -236,7 +218,6 @@ export async function calculateMvviVviTags(boardCode, classLevel, subjectCode) {
     status: { $in: ['published', 'matched'] },
   }).lean();
 
-  // Count frequency of each question (by normalized text)
   const questionFrequency = new Map();
 
   for (const paper of papers) {
@@ -259,7 +240,6 @@ export async function calculateMvviVviTags(boardCode, classLevel, subjectCode) {
     }
   }
 
-  // Generate tags
   const tags = [];
   for (const [normalizedText, data] of questionFrequency.entries()) {
     const frequency = data.count;
@@ -293,8 +273,6 @@ export async function calculateMvviVviTags(boardCode, classLevel, subjectCode) {
 
 /**
  * Apply MVVI/VVI tags to official paper
- * @param {string} paperId - OfficialPaper ID
- * @returns {Promise<Object>} - Updated paper with tags
  */
 export async function applyMvviVviTags(paperId) {
   const paper = await OfficialPaper.findById(paperId).lean();
@@ -304,7 +282,6 @@ export async function applyMvviVviTags(paperId) {
 
   const tags = await calculateMvviVviTags(paper.boardCode, paper.classLevel, paper.subjectCode);
 
-  // Map tags to this paper's questions
   const paperTags = [];
   for (const paperQ of paper.questions) {
     const normalizedText = normalizeText(paperQ.questionText);
@@ -328,53 +305,23 @@ export async function applyMvviVviTags(paperId) {
 }
 
 /**
- * Get papers available for student (only past exam phases)
- * @param {Object} params - Filter parameters
- * @returns {Promise<Array>} - Available papers
+ * FIXED & DYNAMIC: Get papers available for student
+ * Removed strict Date & Status filters so seeded papers appear immediately.
  */
-// FIXED: Added examPhase to destructuring
 export async function getAvailablePapers({ boardCode, classLevel, subjectCode, stream, medium, examPhase }) {
-  const currentDate = new Date();
-  const currentMonth = currentDate.getMonth() + 1; // 1-12
-  const currentYear = currentDate.getFullYear();
-
-  // Get board config to understand exam phase months
-  const boardConfig = await BoardConfig.findOne({ code: boardCode.toLowerCase(), isActive: true }).lean();
-  if (!boardConfig) {
-    throw new Error('Board configuration not found');
-  }
-
-  // Determine which exam phases have passed
-  const phaseOrder = { quarterly: 1, half_yearly: 2, sent_up: 3, annual: 4 };
-  const availablePhases = [];
-
-  for (const phase of boardConfig.examPhases || []) {
-    if (!phase.isActive) continue;
-    const examMonth = getMonthNumber(phase.examMonth);
-    if (examMonth && examMonth < currentMonth) {
-      availablePhases.push(phase.phaseId);
-    } else if (examMonth === currentMonth) {
-      // If same month, check if exam date has passed (simplified: assume mid-month)
-      availablePhases.push(phase.phaseId);
-    }
-  }
-
-  // Also include all phases from previous years
+  // We only filter by core identifiers. 
+  // If it's in the database for this board/class/subject, we show it.
   const query = {
     boardCode: boardCode.toLowerCase(),
     classLevel: String(classLevel),
     subjectCode: subjectCode.toLowerCase(),
-    medium: medium || 'Hindi',
-    status: { $in: ['published', 'matched'] },
-    $or: [
-      { year: { $lt: currentYear } },
-      { year: currentYear, examPhase: { $in: availablePhases } },
-    ],
   };
 
+  // Only filter by stream/medium if explicitly provided
   if (stream) query.stream = stream;
+  if (medium) query.medium = medium; 
   
-  // FIXED: Now examPhase is defined, so this will work perfectly
+  // If user selected an exam phase, filter by it
   if (examPhase) query.examPhase = examPhase;
 
   const papers = await OfficialPaper.find(query)
@@ -387,8 +334,6 @@ export async function getAvailablePapers({ boardCode, classLevel, subjectCode, s
 
 /**
  * Get a specific paper with questions for test taking
- * @param {string} paperId - OfficialPaper ID
- * @returns {Promise<Object>} - Paper with questions (correctOption hidden)
  */
 export async function getPaperForTest(paperId) {
   const paper = await OfficialPaper.findById(paperId).lean();
@@ -396,7 +341,6 @@ export async function getPaperForTest(paperId) {
     throw new Error('Official paper not found');
   }
 
-  // Return questions WITHOUT correctOption for test taking
   const safeQuestions = paper.questions.map((q, idx) => ({
     index: idx,
     questionNumber: q.questionNumber,
@@ -433,8 +377,6 @@ export async function getPaperForTest(paperId) {
 
 /**
  * Get paper with answers for review (after test completion)
- * @param {string} paperId - OfficialPaper ID
- * @returns {Promise<Object>} - Paper with correct answers
  */
 export async function getPaperWithAnswers(paperId) {
   const paper = await OfficialPaper.findById(paperId).lean();
@@ -450,7 +392,7 @@ export async function getPaperWithAnswers(paperId) {
       questionText: q.questionText,
       hindiQuestionText: q.hindiQuestionText,
       options: q.options,
-      correctOption: q.correctOption, // OFFICIAL KEY - ONLY SOURCE OF TRUTH
+      correctOption: q.correctOption, 
       marks: q.marks,
       difficulty: q.difficulty,
       subtopic: q.subtopic,
@@ -469,7 +411,7 @@ function normalizeText(text) {
   if (!text) return '';
   return String(text)
     .toLowerCase()
-    .replace(/[^\w\s\u0900-\u097F]/g, '') // Keep alphanumeric, spaces, Devanagari
+    .replace(/[^\w\s\u0900-\u097F]/g, '') 
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -488,7 +430,6 @@ function getMonthNumber(monthName) {
 
 /**
  * Get papers pending admin review
- * @returns {Promise<Array>} - Papers with pending review matches
  */
 export async function getPapersPendingReview() {
   return OfficialPaper.find({
@@ -502,11 +443,6 @@ export async function getPapersPendingReview() {
 
 /**
  * Admin approve/reject a low-confidence match
- * @param {string} paperId - OfficialPaper ID
- * @param {number} questionNumber - Question number in paper
- * @param {string} action - 'approve' or 'reject'
- * @param {string} adminId - Admin user ID
- * @returns {Promise<Object>} - Updated match status
  */
 export async function adminReviewMatch(paperId, questionNumber, action, adminId) {
   const paper = await OfficialPaper.findById(paperId);
@@ -514,12 +450,7 @@ export async function adminReviewMatch(paperId, questionNumber, action, adminId)
     throw new Error('Official paper not found');
   }
 
-  // Find the match in matchStats (we need to track this better)
-  // For now, update the paper's matchedQuestionIds based on action
-  // This is a simplified version - in production, you'd want a separate Match collection
-
   if (action === 'approve') {
-    // Match is approved - paper can be published if all pending are resolved
     const pendingCount = paper.matchStats.pendingReviewCount - 1;
     const newStatus = pendingCount === 0 ? 'published' : 'matched';
     
@@ -532,14 +463,13 @@ export async function adminReviewMatch(paperId, questionNumber, action, adminId)
       },
     });
   } else if (action === 'reject') {
-    // Match rejected - remove from matchedQuestionIds
     await OfficialPaper.findByIdAndUpdate(paperId, {
       $inc: {
         'matchStats.matchedCount': -1,
         'matchStats.lowConfidenceCount': -1,
         'matchStats.pendingReviewCount': -1,
       },
-      $pull: { matchedQuestionIds: { $in: [] } }, // Would need specific ID
+      $pull: { matchedQuestionIds: { $in: [] } },
     });
   }
 
