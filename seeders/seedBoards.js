@@ -25,27 +25,12 @@ const BOARDS_DATA = [
       { phaseId: 'annual', name: 'Annual Board Exam', hindiName: 'वार्षिक परीक्षा', syllabusCutoffRatio: 1.0, order: 3, examMonth: 'March' },
     ],
     paperPattern: {
-      mcqCount: 40,
-      attemptLimit: 40,
-      marksPerMcq: 1,
-      durationMinutes: 90,
-      negativeMarking: 0,
-      optionsCount: 4,
-      hasShortAnswer: true,
-      shortCount: 10,
-      shortMarks: 2,
-      hasLongAnswer: true,
-      longCount: 4,
-      longMarks: 5,
-      totalMarks: 80,
+      mcqCount: 40, attemptLimit: 40, marksPerMcq: 1, durationMinutes: 90, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 10, shortMarks: 2, hasLongAnswer: true, longCount: 4, longMarks: 5, totalMarks: 80,
     },
     classes: [
       {
-        classLevel: '10',
-        name: 'Class 10',
-        hindiName: 'कक्षा 10',
-        hasStreams: false,
-        order: 2,
+        classLevel: '9', name: 'Class 9', hindiName: 'कक्षा 9', hasStreams: false, order: 1,
         subjects: [
           { code: 'sci', name: 'Science', hindiName: 'विज्ञान', icon: '🔬', color: '#06b6d4', order: 1 },
           { code: 'math', name: 'Mathematics', hindiName: 'गणित', icon: '📐', color: '#3b82f6', order: 2 },
@@ -55,40 +40,38 @@ const BOARDS_DATA = [
         ],
       },
       {
-        classLevel: '12',
-        name: 'Class 12',
-        hindiName: 'कक्षा 12',
-        hasStreams: true,
-        order: 4,
+        classLevel: '10', name: 'Class 10', hindiName: 'कक्षा 10', hasStreams: false, order: 2,
+        subjects: [
+          { code: 'sci', name: 'Science', hindiName: 'विज्ञान', icon: '🔬', color: '#06b6d4', order: 1 },
+          { code: 'math', name: 'Mathematics', hindiName: 'गणित', icon: '📐', color: '#3b82f6', order: 2 },
+          { code: 'sst', name: 'Social Science', hindiName: 'सामाजिक विज्ञान', icon: '🌍', color: '#10b981', order: 3 },
+          { code: 'hin', name: 'Hindi', hindiName: 'हिन्दी', icon: '📖', color: '#f59e0b', order: 4 },
+          { code: 'eng', name: 'English', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#8b5cf6', order: 5 },
+        ],
+      },
+      {
+        classLevel: '11', name: 'Class 11', hindiName: 'कक्षा 11', hasStreams: true, order: 3,
         streams: [
           {
-            streamId: 'science_pcm',
-            name: 'Science (PCM)',
-            hindiName: 'विज्ञान (PCM)',
+            streamId: 'science_pcm', name: 'Science (PCM)', hindiName: 'विज्ञान (PCM)',
             subjects: [
               { code: 'phy', name: 'Physics', hindiName: 'भौतिक विज्ञान', icon: '⚛️', color: '#06b6d4', order: 1 },
               { code: 'chem', name: 'Chemistry', hindiName: 'रसायन विज्ञान', icon: '🧪', color: '#3b82f6', order: 2 },
               { code: 'math', name: 'Mathematics', hindiName: 'गणित', icon: '📐', color: '#8b5cf6', order: 3 },
               { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#10b981', order: 4 },
-              { code: 'hin', name: 'Hindi Core', hindiName: 'हिन्दी कोर', icon: '📖', color: '#f59e0b', order: 5 },
             ],
           },
           {
-            streamId: 'science_pcb',
-            name: 'Science (PCB)',
-            hindiName: 'विज्ञान (PCB)',
+            streamId: 'science_pcb', name: 'Science (PCB)', hindiName: 'विज्ञान (PCB)',
             subjects: [
               { code: 'phy', name: 'Physics', hindiName: 'भौतिक विज्ञान', icon: '⚛️', color: '#06b6d4', order: 1 },
               { code: 'chem', name: 'Chemistry', hindiName: 'रसायन विज्ञान', icon: '🧪', color: '#3b82f6', order: 2 },
               { code: 'bio', name: 'Biology', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
               { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
-              { code: 'hin', name: 'Hindi Core', hindiName: 'हिन्दी कोर', icon: '📖', color: '#f59e0b', order: 5 },
             ],
           },
           {
-            streamId: 'commerce',
-            name: 'Commerce',
-            hindiName: 'वाणिज्य',
+            streamId: 'commerce', name: 'Commerce', hindiName: 'वाणिज्य',
             subjects: [
               { code: 'acc', name: 'Accountancy', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
               { code: 'bst', name: 'Business Studies', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
@@ -97,9 +80,7 @@ const BOARDS_DATA = [
             ],
           },
           {
-            streamId: 'arts',
-            name: 'Arts / Humanities',
-            hindiName: 'कला / मानविकी',
+            streamId: 'arts', name: 'Arts / Humanities', hindiName: 'कला / मानविकी',
             subjects: [
               { code: 'hist', name: 'History', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
               { code: 'pol', name: 'Political Science', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
@@ -110,35 +91,44 @@ const BOARDS_DATA = [
         ],
       },
       {
-        classLevel: '9',
-        name: 'Class 9',
-        hindiName: 'कक्षा 9',
-        hasStreams: false,
-        order: 1,
-        subjects: [
-          { code: 'sci', name: 'Science', hindiName: 'विज्ञान', icon: '🔬', color: '#06b6d4', order: 1 },
-          { code: 'math', name: 'Mathematics', hindiName: 'गणित', icon: '📐', color: '#3b82f6', order: 2 },
-          { code: 'sst', name: 'Social Science', hindiName: 'सामाजिक विज्ञान', icon: '🌍', color: '#10b981', order: 3 },
-          { code: 'hin', name: 'Hindi', hindiName: 'हिन्दी', icon: '📖', color: '#f59e0b', order: 4 },
-          { code: 'eng', name: 'English', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#8b5cf6', order: 5 },
-        ],
-      },
-      {
-        classLevel: '11',
-        name: 'Class 11',
-        hindiName: 'कक्षा 11',
-        hasStreams: true,
-        order: 3,
+        classLevel: '12', name: 'Class 12', hindiName: 'कक्षा 12', hasStreams: true, order: 4,
         streams: [
           {
-            streamId: 'science_pcm',
-            name: 'Science (PCM)',
-            hindiName: 'विज्ञान (PCM)',
+            streamId: 'science_pcm', name: 'Science (PCM)', hindiName: 'विज्ञान (PCM)',
             subjects: [
               { code: 'phy', name: 'Physics', hindiName: 'भौतिक विज्ञान', icon: '⚛️', color: '#06b6d4', order: 1 },
               { code: 'chem', name: 'Chemistry', hindiName: 'रसायन विज्ञान', icon: '🧪', color: '#3b82f6', order: 2 },
               { code: 'math', name: 'Mathematics', hindiName: 'गणित', icon: '📐', color: '#8b5cf6', order: 3 },
               { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#10b981', order: 4 },
+              { code: 'hin', name: 'Hindi Core', hindiName: 'हिन्दी कोर', icon: '📖', color: '#f59e0b', order: 5 },
+            ],
+          },
+          {
+            streamId: 'science_pcb', name: 'Science (PCB)', hindiName: 'विज्ञान (PCB)',
+            subjects: [
+              { code: 'phy', name: 'Physics', hindiName: 'भौतिक विज्ञान', icon: '⚛️', color: '#06b6d4', order: 1 },
+              { code: 'chem', name: 'Chemistry', hindiName: 'रसायन विज्ञान', icon: '🧪', color: '#3b82f6', order: 2 },
+              { code: 'bio', name: 'Biology', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
+              { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
+              { code: 'hin', name: 'Hindi Core', hindiName: 'हिन्दी कोर', icon: '📖', color: '#f59e0b', order: 5 },
+            ],
+          },
+          {
+            streamId: 'commerce', name: 'Commerce', hindiName: 'वाणिज्य',
+            subjects: [
+              { code: 'acc', name: 'Accountancy', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
+              { code: 'bst', name: 'Business Studies', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
+              { code: 'eco', name: 'Economics', hindiName: 'अर्थशास्त्र', icon: '📈', color: '#f59e0b', order: 3 },
+              { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
+            ],
+          },
+          {
+            streamId: 'arts', name: 'Arts / Humanities', hindiName: 'कला / मानविकी',
+            subjects: [
+              { code: 'hist', name: 'History', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
+              { code: 'pol', name: 'Political Science', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
+              { code: 'geo', name: 'Geography', hindiName: 'भूगोल', icon: '🗺️', color: '#10b981', order: 3 },
+              { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
             ],
           },
         ],
@@ -165,27 +155,12 @@ const BOARDS_DATA = [
       { phaseId: 'annual', name: 'Annual Board Exam (वार्षिक बोर्ड परीक्षा)', hindiName: 'वार्षिक बोर्ड परीक्षा', syllabusCutoffRatio: 1.0, order: 4, examMonth: 'February' },
     ],
     paperPattern: {
-      mcqCount: 100, // BSEB gives 100 MCQs
-      attemptLimit: 50, // Student answers any 50
-      marksPerMcq: 1,
-      durationMinutes: 195, // 3 hours 15 minutes
-      negativeMarking: 0,
-      optionsCount: 4,
-      hasShortAnswer: true,
-      shortCount: 30,
-      shortMarks: 2,
-      hasLongAnswer: true,
-      longCount: 8,
-      longMarks: 5,
-      totalMarks: 100,
+      mcqCount: 100, attemptLimit: 50, marksPerMcq: 1, durationMinutes: 195, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 30, shortMarks: 2, hasLongAnswer: true, longCount: 8, longMarks: 5, totalMarks: 100,
     },
     classes: [
       {
-        classLevel: '10',
-        name: 'Matric (Class 10)',
-        hindiName: 'मैट्रिक (कक्षा 10)',
-        hasStreams: false,
-        order: 1,
+        classLevel: '10', name: 'Matric (Class 10)', hindiName: 'मैट्रिक (कक्षा 10)', hasStreams: false, order: 1,
         subjects: [
           { code: 'sci', name: 'Science (विज्ञान)', hindiName: 'विज्ञान', icon: '🔬', color: '#06b6d4', order: 1 },
           { code: 'math', name: 'Mathematics (गणित)', hindiName: 'गणित', icon: '📐', color: '#3b82f6', order: 2 },
@@ -196,16 +171,10 @@ const BOARDS_DATA = [
         ],
       },
       {
-        classLevel: '12',
-        name: 'Intermediate (Class 12)',
-        hindiName: 'इंटरमीडिएट (कक्षा 12)',
-        hasStreams: true,
-        order: 2,
+        classLevel: '11', name: 'Intermediate (Class 11)', hindiName: 'इंटरमीडिएट (कक्षा 11)', hasStreams: true, order: 2,
         streams: [
           {
-            streamId: 'science_pcm',
-            name: 'I.Sc. Science (PCM)',
-            hindiName: 'आई.एससी. (PCM)',
+            streamId: 'science_pcm', name: 'I.Sc. Science (PCM)', hindiName: 'आई.एससी. (PCM)',
             subjects: [
               { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
               { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
@@ -215,13 +184,76 @@ const BOARDS_DATA = [
             ],
           },
           {
-            streamId: 'science_pcb',
-            name: 'I.Sc. Science (PCB)',
-            hindiName: 'आई.एससी. (PCB)',
+            streamId: 'science_pcb', name: 'I.Sc. Science (PCB)', hindiName: 'आई.एससी. (PCB)',
             subjects: [
               { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
               { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
               { code: 'bio', name: 'Biology (जीव विज्ञान)', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
+              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+          {
+            streamId: 'commerce', name: 'Commerce (वाणिज्य)', hindiName: 'वाणिज्य',
+            subjects: [
+              { code: 'acc', name: 'Accountancy (लेखाशास्त्र)', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
+              { code: 'bst', name: 'Business Studies (व्यवसाय अध्ययन)', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
+              { code: 'eco', name: 'Economics (अर्थशास्त्र)', hindiName: 'अर्थशास्त्र', icon: '📈', color: '#f59e0b', order: 3 },
+              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+          {
+            streamId: 'arts', name: 'Arts / Humanities (कला)', hindiName: 'कला / मानविकी',
+            subjects: [
+              { code: 'hist', name: 'History (इतिहास)', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
+              { code: 'pol', name: 'Political Science (राजनीति विज्ञान)', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
+              { code: 'geo', name: 'Geography (भूगोल)', hindiName: 'भूगोल', icon: '🗺️', color: '#10b981', order: 3 },
+              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+        ],
+      },
+      {
+        classLevel: '12', name: 'Intermediate (Class 12)', hindiName: 'इंटरमीडिएट (कक्षा 12)', hasStreams: true, order: 3,
+        streams: [
+          {
+            streamId: 'science_pcm', name: 'I.Sc. Science (PCM)', hindiName: 'आई.एससी. (PCM)',
+            subjects: [
+              { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
+              { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
+              { code: 'math', name: 'Mathematics (गणित)', hindiName: 'गणित', icon: '📐', color: '#8b5cf6', order: 3 },
+              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#10b981', order: 5 },
+            ],
+          },
+          {
+            streamId: 'science_pcb', name: 'I.Sc. Science (PCB)', hindiName: 'आई.एससी. (PCB)',
+            subjects: [
+              { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
+              { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
+              { code: 'bio', name: 'Biology (जीव विज्ञान)', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
+              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+          {
+            streamId: 'commerce', name: 'Commerce (वाणिज्य)', hindiName: 'वाणिज्य',
+            subjects: [
+              { code: 'acc', name: 'Accountancy (लेखाशास्त्र)', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
+              { code: 'bst', name: 'Business Studies (व्यवसाय अध्ययन)', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
+              { code: 'eco', name: 'Economics (अर्थशास्त्र)', hindiName: 'अर्थशास्त्र', icon: '📈', color: '#f59e0b', order: 3 },
+              { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+          {
+            streamId: 'arts', name: 'Arts / Humanities (कला)', hindiName: 'कला / मानविकी',
+            subjects: [
+              { code: 'hist', name: 'History (इतिहास)', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
+              { code: 'pol', name: 'Political Science (राजनीति विज्ञान)', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
+              { code: 'geo', name: 'Geography (भूगोल)', hindiName: 'भूगोल', icon: '🗺️', color: '#10b981', order: 3 },
               { code: 'hin', name: 'Hindi 100 Marks (हिन्दी)', hindiName: 'हिन्दी 100 अंक', icon: '📖', color: '#f59e0b', order: 4 },
               { code: 'eng', name: 'English 100 Marks (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी 100 अंक', icon: '🔤', color: '#8b5cf6', order: 5 },
             ],
@@ -249,27 +281,12 @@ const BOARDS_DATA = [
       { phaseId: 'annual', name: 'CBSE Board Exam', hindiName: 'वार्षिक बोर्ड परीक्षा', syllabusCutoffRatio: 1.0, order: 3, examMonth: 'February' },
     ],
     paperPattern: {
-      mcqCount: 20,
-      attemptLimit: 20,
-      marksPerMcq: 1,
-      durationMinutes: 180,
-      negativeMarking: 0,
-      optionsCount: 4,
-      hasShortAnswer: true,
-      shortCount: 15,
-      shortMarks: 2,
-      hasLongAnswer: true,
-      longCount: 6,
-      longMarks: 5,
-      totalMarks: 80,
+      mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 180, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 15, shortMarks: 2, hasLongAnswer: true, longCount: 6, longMarks: 5, totalMarks: 80,
     },
     classes: [
       {
-        classLevel: '10',
-        name: 'Class 10',
-        hindiName: 'कक्षा 10',
-        hasStreams: false,
-        order: 1,
+        classLevel: '10', name: 'Class 10', hindiName: 'कक्षा 10', hasStreams: false, order: 1,
         subjects: [
           { code: 'sci', name: 'Science', hindiName: 'विज्ञान', icon: '🔬', color: '#06b6d4', order: 1 },
           { code: 'math', name: 'Mathematics (Standard / Basic)', hindiName: 'गणित', icon: '📐', color: '#3b82f6', order: 2 },
@@ -279,21 +296,42 @@ const BOARDS_DATA = [
         ],
       },
       {
-        classLevel: '12',
-        name: 'Class 12',
-        hindiName: 'कक्षा 12',
-        hasStreams: true,
-        order: 2,
+        classLevel: '12', name: 'Class 12', hindiName: 'कक्षा 12', hasStreams: true, order: 2,
         streams: [
           {
-            streamId: 'science_pcm',
-            name: 'Science (PCM)',
-            hindiName: 'विज्ञान (PCM)',
+            streamId: 'science_pcm', name: 'Science (PCM)', hindiName: 'विज्ञान (PCM)',
             subjects: [
               { code: 'phy', name: 'Physics', hindiName: 'भौतिक विज्ञान', icon: '⚛️', color: '#06b6d4', order: 1 },
               { code: 'chem', name: 'Chemistry', hindiName: 'रसायन विज्ञान', icon: '🧪', color: '#3b82f6', order: 2 },
               { code: 'math', name: 'Mathematics', hindiName: 'गणित', icon: '📐', color: '#8b5cf6', order: 3 },
               { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#10b981', order: 4 },
+            ],
+          },
+          {
+            streamId: 'science_pcb', name: 'Science (PCB)', hindiName: 'विज्ञान (PCB)',
+            subjects: [
+              { code: 'phy', name: 'Physics', hindiName: 'भौतिक विज्ञान', icon: '⚛️', color: '#06b6d4', order: 1 },
+              { code: 'chem', name: 'Chemistry', hindiName: 'रसायन विज्ञान', icon: '🧪', color: '#3b82f6', order: 2 },
+              { code: 'bio', name: 'Biology', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
+              { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
+            ],
+          },
+          {
+            streamId: 'commerce', name: 'Commerce', hindiName: 'वाणिज्य',
+            subjects: [
+              { code: 'acc', name: 'Accountancy', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
+              { code: 'bst', name: 'Business Studies', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
+              { code: 'eco', name: 'Economics', hindiName: 'अर्थशास्त्र', icon: '📈', color: '#f59e0b', order: 3 },
+              { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
+            ],
+          },
+          {
+            streamId: 'arts', name: 'Arts / Humanities', hindiName: 'कला / मानविकी',
+            subjects: [
+              { code: 'hist', name: 'History', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
+              { code: 'pol', name: 'Political Science', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
+              { code: 'geo', name: 'Geography', hindiName: 'भूगोल', icon: '🗺️', color: '#10b981', order: 3 },
+              { code: 'eng', name: 'English Core', hindiName: 'अंग्रेज़ी कोर', icon: '🔤', color: '#8b5cf6', order: 4 },
             ],
           },
         ],
@@ -319,27 +357,12 @@ const BOARDS_DATA = [
       { phaseId: 'annual', name: 'UP Board High School / Inter Exam', hindiName: 'वार्षिक बोर्ड परीक्षा', syllabusCutoffRatio: 1.0, order: 3, examMonth: 'February' },
     ],
     paperPattern: {
-      mcqCount: 20, // OMR sheet based 20 MCQs in UP Board
-      attemptLimit: 20,
-      marksPerMcq: 1,
-      durationMinutes: 195,
-      negativeMarking: 0,
-      optionsCount: 4,
-      hasShortAnswer: true,
-      shortCount: 10,
-      shortMarks: 2,
-      hasLongAnswer: true,
-      longCount: 5,
-      longMarks: 6,
-      totalMarks: 70,
+      mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 195, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 10, shortMarks: 2, hasLongAnswer: true, longCount: 5, longMarks: 6, totalMarks: 70,
     },
     classes: [
       {
-        classLevel: '10',
-        name: 'High School (Class 10)',
-        hindiName: 'हाई स्कूल (कक्षा 10)',
-        hasStreams: false,
-        order: 1,
+        classLevel: '10', name: 'High School (Class 10)', hindiName: 'हाई स्कूल (कक्षा 10)', hasStreams: false, order: 1,
         subjects: [
           { code: 'sci', name: 'Science (विज्ञान)', hindiName: 'विज्ञान', icon: '🔬', color: '#06b6d4', order: 1 },
           { code: 'math', name: 'Mathematics (गणित)', hindiName: 'गणित', icon: '📐', color: '#3b82f6', order: 2 },
@@ -348,11 +371,57 @@ const BOARDS_DATA = [
           { code: 'eng', name: 'English (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#8b5cf6', order: 5 },
         ],
       },
+      {
+        classLevel: '12', name: 'Intermediate (Class 12)', hindiName: 'इंटरमीडिएट (कक्षा 12)', hasStreams: true, order: 2,
+        streams: [
+          {
+            streamId: 'science_pcm', name: 'Science (PCM)', hindiName: 'विज्ञान (PCM)',
+            subjects: [
+              { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
+              { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
+              { code: 'math', name: 'Mathematics (गणित)', hindiName: 'गणित', icon: '📐', color: '#8b5cf6', order: 3 },
+              { code: 'hin', name: 'Hindi (हिन्दी)', hindiName: 'हिन्दी', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#10b981', order: 5 },
+            ],
+          },
+          {
+            streamId: 'science_pcb', name: 'Science (PCB)', hindiName: 'विज्ञान (PCB)',
+            subjects: [
+              { code: 'phy', name: 'Physics (भौतिकी)', hindiName: 'भौतिकी', icon: '⚛️', color: '#06b6d4', order: 1 },
+              { code: 'chem', name: 'Chemistry (रसायन शास्त्र)', hindiName: 'रसायन शास्त्र', icon: '🧪', color: '#3b82f6', order: 2 },
+              { code: 'bio', name: 'Biology (जीव विज्ञान)', hindiName: 'जीव विज्ञान', icon: '🧬', color: '#10b981', order: 3 },
+              { code: 'hin', name: 'Hindi (हिन्दी)', hindiName: 'हिन्दी', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+          {
+            streamId: 'commerce', name: 'Commerce (वाणिज्य)', hindiName: 'वाणिज्य',
+            subjects: [
+              { code: 'acc', name: 'Accountancy (लेखाशास्त्र)', hindiName: 'लेखाशास्त्र', icon: '📊', color: '#10b981', order: 1 },
+              { code: 'bst', name: 'Business Studies (व्यवसाय अध्ययन)', hindiName: 'व्यवसाय अध्ययन', icon: '💼', color: '#3b82f6', order: 2 },
+              { code: 'eco', name: 'Economics (अर्थशास्त्र)', hindiName: 'अर्थशास्त्र', icon: '📈', color: '#f59e0b', order: 3 },
+              { code: 'hin', name: 'Hindi (हिन्दी)', hindiName: 'हिन्दी', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+          {
+            streamId: 'arts', name: 'Arts / Humanities (कला)', hindiName: 'कला / मानविकी',
+            subjects: [
+              { code: 'hist', name: 'History (इतिहास)', hindiName: 'इतिहास', icon: '🏛️', color: '#f59e0b', order: 1 },
+              { code: 'pol', name: 'Political Science (राजनीति विज्ञान)', hindiName: 'राजनीति विज्ञान', icon: '⚖️', color: '#3b82f6', order: 2 },
+              { code: 'geo', name: 'Geography (भूगोल)', hindiName: 'भूगोल', icon: '🗺️', color: '#10b981', order: 3 },
+              { code: 'hin', name: 'Hindi (हिन्दी)', hindiName: 'हिन्दी', icon: '📖', color: '#f59e0b', order: 4 },
+              { code: 'eng', name: 'English (अंग्रेज़ी)', hindiName: 'अंग्रेज़ी', icon: '🔤', color: '#8b5cf6', order: 5 },
+            ],
+          },
+        ],
+      },
     ],
   },
 ];
 
 const SEED_CHAPTERS = [
+  // (Aapke chapters ka data bilkul same rahega, maine isko chheda nahi hai)
   // Class 10 Science (NCERT & Fallback)
   { boardCode: 'ncert_default', classLevel: '10', subjectCode: 'sci', chapterNumber: 1, title: 'Chemical Reactions and Equations', hindiTitle: 'रासायनिक अभिक्रियाएँ एवं समीकरण', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'ncert_default', classLevel: '10', subjectCode: 'sci', chapterNumber: 2, title: 'Acids, Bases and Salts', hindiTitle: 'अम्ल, क्षारक एवं लवण', phaseCutoff: 'quarterly', isLive: true },
@@ -400,7 +469,7 @@ const SEED_CHAPTERS = [
   { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 13, title: 'Nuclei', hindiTitle: 'नाभिक', phaseCutoff: 'annual', isLive: false },
   { boardCode: 'ncert_default', classLevel: '12', subjectCode: 'phy', stream: 'science_pcm', chapterNumber: 14, title: 'Semiconductor Electronics', hindiTitle: 'अर्धचालक इलेक्ट्रॉनिकी', phaseCutoff: 'annual', isLive: false },
 
-  // BSEB specific chapters for Class 10 Science (mirroring BSEB state text with special local focus)
+  // BSEB specific chapters for Class 10 Science
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 1, title: 'रासायनिक अभिक्रियाएँ एवं समीकरण', hindiTitle: 'रासायनिक अभिक्रियाएँ एवं समीकरण', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 2, title: 'अम्ल, क्षारक एवं लवण', hindiTitle: 'अम्ल, क्षारक एवं लवण', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'bseb', classLevel: '10', subjectCode: 'sci', chapterNumber: 3, title: 'धातु एवं अधातु', hindiTitle: 'धातु एवं अधातु', phaseCutoff: 'half_yearly', isLive: true },
