@@ -11,6 +11,7 @@ import noteRoute from './routes/notes.js';
 import testRoute from './routes/tests.js';
 import subjectiveRoute from './routes/subjective.js';
 import paperRoute from './routes/paper.js';
+import adminRoute from './routes/admin.js'; // <-- NAYA IMPORT ADD KIYA
 
 dotenv.config();
 
@@ -79,7 +80,11 @@ app.use('/api/tasks', taskRoute);
 app.use('/api/notes', noteRoute);
 app.use('/api/tests', testRoute);
 app.use('/api/subjective', subjectiveRoute);
+
+// Admin Routes Setup
 app.use('/api/admin', paperRoute);
+app.use('/api/admin', adminRoute); // <-- NAYA ROUTE ADD KIYA (User Management ke liye)
+
 app.use('/api/student', paperRoute);
 
 /* ---------- 404 ---------- */
