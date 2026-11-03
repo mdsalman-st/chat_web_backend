@@ -4,6 +4,7 @@ import GenerationJob from '../models/GenerationJob.js';
 import BoardConfig from '../models/BoardConfig.js';
 import QuestionFlag from '../models/QuestionFlag.js';
 import Question from '../models/Question.js';
+import bcrypt from 'bcryptjs'; // <-- NAYA IMPORT (Password Hash ke liye)
 
 // ==========================================
 // 1. DASHBOARD STATS
@@ -185,6 +186,55 @@ export async function resolveFlag(req, res) {
 
     res.json({ success: true, message: `Flag ${action === 'approve' ? 'resolved & Question Disabled' : 'Dismissed'}` });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ==========================================
+// 5. NAYA: CREATE ADMIN DIRECTLY
+// ==========================================
+export async function createUserByAdmin(req, res) {
+  try {
+    // 1. Check karo ki request Super Admin se aayi hai
+    if (!['super_admin', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Super Admin access required' });
+    }
+
+    const { name, email, phone, password, subject } = req.body;
+
+    // 2. Validation
+    if (!name || !email || !phone || !password || !subject) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    const existing = await User.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      return res.status(409).json({ error: 'This email is already registered' });
+    }
+
+    // 3. Password Hash karo (Auth controller wala logic)
+    const PEPPER = process.env.JWT_SECRET + '_pepper_nexus';
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(password + PEPPER, salt);
+
+    // 4. Naya User banao (Role: subject_admin)
+    const newUser = await User.create({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone.trim(),
+      passwordHash,
+      salt,
+      role: 'subject_admin',
+      assignedSubject: subject.trim().toLowerCase()
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Admin created successfully', 
+      user: newUser.toJSON() 
+    });
+  } catch (err) {
+    console.error('createUserByAdmin error:', err);
     res.status(500).json({ error: err.message });
   }
 }

@@ -1,5 +1,5 @@
 import express from 'express';
-import { protect } from '../middleware/authMiddleware.js'; // Ensure path is correct
+import { protect } from '../middleware/authMiddleware.js'; 
 import { 
   getAdminStats, 
   getUsers, 
@@ -7,7 +7,8 @@ import {
   revokeAdmin,
   addNewBoard,
   getFlaggedQuestions,
-  resolveFlag
+  resolveFlag,
+  createUserByAdmin // <-- NAYA IMPORT ADD KIYA
 } from '../controllers/adminController.js';
 
 const router = express.Router();
@@ -22,6 +23,7 @@ router.get('/stats', getAdminStats);
 
 // 2. User Management
 router.get('/users', getUsers);
+router.post('/users/create', createUserByAdmin); // <-- NAYA ROUTE ADD KIYA
 router.put('/users/:userId/promote', promoteToAdmin);
 router.put('/users/:userId/revoke', revokeAdmin);
 
