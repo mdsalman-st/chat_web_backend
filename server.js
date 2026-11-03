@@ -32,10 +32,11 @@ app.disable('x-powered-by');
 /* ---------- 1. SECURITY HEADERS (Helmet) ---------- */
 app.use(helmet());
 
-/* ---------- 2. CORS (Strict) ---------- */
+/* ---------- 2. CORS (Strict Whitelist - SECURE) ---------- */
 const ALLOWED_ORIGINS = [
   'https://chat-web.alimdrahul01.workers.dev',
   'https://chatweb-olive-theta.vercel.app',
+  'https://chat-osj33xvvq-majid-d224.vercel.app', // 👈 Naya Vercel URL yahan add kiya
   'http://localhost:3000',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
@@ -44,9 +45,11 @@ const ALLOWED_ORIGINS = [
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true); // Postman/Mobile
+    
+    // Strict check: Sirf list mein maujood URL hi allow hoga
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
 
-    // PRO FIX: 500 ki jagah clean 403 bhejo, server crash/error noise nahi
+    // Block unknown origins (No server crash, clean 403)
     console.warn(`⚠️ CORS blocked for origin: ${origin}`);
     const corsError = new Error('CORS Policy: This origin is not allowed');
     corsError.status = 403;
@@ -121,7 +124,7 @@ app.use((req, res) => {
 
 /* ---------- Error handler ---------- */
 app.use((err, req, res, next) => {
-  // PRO FIX: CORS rejections ko "Server error" mat bolo — ye expected hain
+  // CORS rejections ko "Server error" mat bolo — ye expected hain
   if (err.status === 403 && err.message.includes('CORS')) {
     return res.status(403).json({ error: err.message });
   }
