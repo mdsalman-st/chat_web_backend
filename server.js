@@ -45,8 +45,12 @@ app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true); // Postman/Mobile
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    // PRO FIX: Block unknown origins
-    return callback(new Error('CORS Policy: This origin is not allowed')); 
+
+    // PRO FIX: 500 ki jagah clean 403 bhejo, server crash/error noise nahi
+    console.warn(`⚠️ CORS blocked for origin: ${origin}`);
+    const corsError = new Error('CORS Policy: This origin is not allowed');
+    corsError.status = 403;
+    return callback(corsError);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -117,6 +121,11 @@ app.use((req, res) => {
 
 /* ---------- Error handler ---------- */
 app.use((err, req, res, next) => {
+  // PRO FIX: CORS rejections ko "Server error" mat bolo — ye expected hain
+  if (err.status === 403 && err.message.includes('CORS')) {
+    return res.status(403).json({ error: err.message });
+  }
+
   console.error('❌ Server error:', err);
   // Don't leak stack traces in production
   const msg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
