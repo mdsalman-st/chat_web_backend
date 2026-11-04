@@ -28,6 +28,7 @@ export async function processPageOCR(submissionId, pageNumber) {
     const prompt = `You are a high-precision OCR engine specializing in Indian state board handwritten examination answer copies in Hindi (Devanagari) and English.
 Transcribe all handwritten student answers visible on this page accurately.
 Preserve question numbers (e.g., "प्रश्न 1", "Q1", "Ans 2") and mathematical or chemical notations.
+DO NOT summarize. DO NOT hallucinate. If the page is blank or unreadable, return an empty string.
 
 Return STRICT JSON matching this schema:
 {
@@ -37,7 +38,7 @@ Return STRICT JSON matching this schema:
   "detectedQuestions": [1, 2]
 }`;
 
-    // 👇 NAYA LOGIC: Agar DB me base64 nahi hai, toh Cloudinary URL se fetch karo
+    // Agar DB me base64 nahi hai, toh Cloudinary URL se fetch karo
     let imageBase64Data = page.imageBase64;
     
     if (!imageBase64Data && page.imageUrl) {
@@ -48,12 +49,11 @@ Return STRICT JSON matching this schema:
         imageBase64Data = Buffer.from(arrayBuffer).toString('base64');
       } catch (fetchErr) {
         console.error(`Failed to fetch image from Cloudinary: ${fetchErr.message}`);
-        // Agar fetch fail ho jaye toh purana base64 use karne ki koshish karo (agar hai toh)
       }
     }
 
     const { result } = await executeGeminiVisionWithFailover({
-      imageBase64: imageBase64Data, // Ab AI ko image milegi
+      imageBase64: imageBase64Data, 
       mimeType: page.mimeType || 'image/jpeg',
       prompt,
       systemInstruction: 'You are an accurate OCR system for handwritten examination papers in Hindi and English.',
@@ -69,7 +69,7 @@ Return STRICT JSON matching this schema:
   } catch (err) {
     console.error(`OCR error on page ${pageNumber} for submission ${submissionId}:`, err);
     page.processingStatus = 'failed';
-    page.ocrText = `[Handwriting transcription note: Automatic OCR could not clearly parse page ${pageNumber}. Fallback transcription used.]`;
+    page.ocrText = `[OCR Failed: Could not read handwriting on page ${pageNumber}.]`;
     await submission.save();
     return page.ocrText;
   }
@@ -107,7 +107,7 @@ export async function evaluateSubmission(submissionId) {
   updatedSubmission.combinedTranscript = combinedTranscript;
   await updatedSubmission.save();
 
-  // 2. Fetch official paper questions or generate standard board subjective questions
+  // 2. Fetch official paper questions or infer from transcript
   let targetQuestions = [];
   if (updatedSubmission.paperId) {
     const paper = await OfficialPaper.findById(updatedSubmission.paperId).lean();
@@ -122,24 +122,65 @@ export async function evaluateSubmission(submissionId) {
     }
   }
 
+  // 👇 NAYA FIX: Agar paper select nahi kiya, toh AI khud transcript se question guess karega
   if (targetQuestions.length === 0) {
-    // Standard questions based on board and subject
-    targetQuestions = [
-      {
+    const subjectName = updatedSubmission.subjectName || updatedSubmission.subjectCode || 'General';
+    
+    // Agar page blank hai toh direct fail kar do
+    if (!combinedTranscript || combinedTranscript.trim().length < 10) {
+       updatedSubmission.status = 'completed';
+       updatedSubmission.totalMarks = 0;
+       updatedSubmission.obtainedMarks = 0;
+       updatedSubmission.percentage = 0;
+       updatedSubmission.overallFeedback = 'No readable answer found in the uploaded sheet. Please write your answers clearly.';
+       updatedSubmission.evaluations = [];
+       await updatedSubmission.save();
+       return updatedSubmission;
+    }
+
+    const extractQuestionsPrompt = `You are an expert ${subjectName} examiner.
+The student has written answers for a subjective test but we don't have the exact question paper.
+Read the following student transcript and infer what the questions might have been based on their answers.
+
+Transcript:
+"""
+${combinedTranscript}
+"""
+
+Return JSON:
+{
+  "questions": [
+    {
+      "questionNumber": 1,
+      "questionText": "Inferred question in English",
+      "hindiQuestionText": "Inferred question in Hindi",
+      "maxMarks": 5,
+      "modelAnswer": "Standard ideal answer for this question"
+    }
+  ]
+}`;
+
+    try {
+      const genRes = await executeAiJsonWithFailover({
+        prompt: extractQuestionsPrompt,
+        systemInstruction: 'You are a strict examiner inferring subjective questions from student answers.',
+        taskType: 'heavy',
+      });
+      targetQuestions = genRes.result?.questions || [];
+    } catch (e) {
+      console.error("Failed to infer questions from transcript", e);
+    }
+
+    // Agar phir bhi AI questions na bana paye
+    if (targetQuestions.length === 0) {
+      targetQuestions = [{
         questionNumber: 1,
-        questionText: 'What is a chemical reaction? Write two characteristics with balanced equations.',
-        hindiQuestionText: 'रासायनिक अभिक्रिया क्या है? संतुलित समीकरण के साथ इसके दो लक्षण लिखिए।',
-        maxMarks: 5,
-        modelAnswer: 'A chemical reaction is a process where substances transform into new substances with different properties. Characteristics: Evolution of gas, change in colour, precipitate formation. Equation: Zn + H2SO4 -> ZnSO4 + H2.',
-      },
-      {
-        questionNumber: 2,
-        questionText: 'Explain the difference between displacement and double displacement reaction with examples.',
-        hindiQuestionText: 'विस्थापन एवं द्विविस्थापन अभिक्रिया में उदाहरण सहित अंतर स्पष्ट कीजिए।',
-        maxMarks: 5,
-        modelAnswer: 'Displacement reaction involves a more reactive element displacing a less reactive element. Double displacement involves mutual exchange of ions between two compounds.',
-      },
-    ];
+        questionText: `General Assessment for ${subjectName}`,
+        hindiQuestionText: `${subjectName} के लिए सामान्य मूल्यांकन`,
+        maxMarks: 10,
+        modelAnswer: 'Evaluated based on general board standards for this subject.'
+      }];
+    }
   }
 
   // 3. AI Rubric Evaluation using failover
@@ -163,19 +204,18 @@ ${combinedTranscript}
 """
 
 Evaluate Question ${q.questionNumber} from the student's transcript strictly against the model answer and award step marks.
+If the student's answer is completely missing or irrelevant, award 0 marks.
 
 Return STRICT JSON:
 {
   "studentAnswerFound": true,
-  "studentAnswer": "excerpt of answer found for this question",
+  "studentAnswer": "excerpt of answer found for this question, or 'Not found'",
   "awardedMarks": 4.5,
   "feedback": "constructive examiner review in bilingual style (Hindi + English)",
-  "keywordsCovered": ["chemical reaction", "balanced equation"],
-  "keywordsMissed": ["precipitate formation"],
+  "keywordsCovered": ["keyword1"],
+  "keywordsMissed": ["keyword2"],
   "stepMarksBreakdown": [
-    { "step": "Definition and Concept", "marks": 2, "awarded": 2, "comment": "Accurate definition provided." },
-    { "step": "Balanced Chemical Equation", "marks": 2, "awarded": 1.5, "comment": "Correct formula, minor state symbol missing." },
-    { "step": "Characteristics / Examples", "marks": 1, "awarded": 1, "comment": "Good illustration." }
+    { "step": "Definition and Concept", "marks": 2, "awarded": 2, "comment": "Accurate definition provided." }
   ],
   "diagramCredit": {
     "required": false,
@@ -183,7 +223,7 @@ Return STRICT JSON:
     "maxMarks": 0,
     "comment": "No diagram required"
   },
-  "examinerRemarks": "Overall good presentation. Keep handwriting neat for board exams."
+  "examinerRemarks": "Overall feedback."
 }`;
 
     try {
@@ -193,7 +233,7 @@ Return STRICT JSON:
         taskType: 'heavy',
       });
 
-      const awarded = Math.min(q.maxMarks, Math.max(0, Number(result.awardedMarks) || Math.round(q.maxMarks * 0.7)));
+      const awarded = Math.min(q.maxMarks, Math.max(0, Number(result.awardedMarks) || 0));
       totalAwardedMarks += awarded;
 
       evaluations.push({
@@ -201,7 +241,7 @@ Return STRICT JSON:
         questionText: q.questionText,
         hindiQuestionText: q.hindiQuestionText,
         modelAnswer: q.modelAnswer,
-        studentAnswer: result.studentAnswer || 'Transcribed response from copy.',
+        studentAnswer: result.studentAnswer || 'Not found in transcript.',
         maxMarks: q.maxMarks,
         awardedMarks: awarded,
         feedback: result.feedback || 'Checked as per board criteria.',
@@ -213,7 +253,9 @@ Return STRICT JSON:
       });
     } catch (evalErr) {
       console.warn(`Fallback evaluation for Q${q.questionNumber}:`, evalErr.message);
-      const fallbackAwarded = Math.round(q.maxMarks * 0.75);
+      
+      // 👇 NAYA FIX: Fail hone par 0 marks do, 75% nahi!
+      const fallbackAwarded = 0; 
       totalAwardedMarks += fallbackAwarded;
 
       evaluations.push({
@@ -221,18 +263,15 @@ Return STRICT JSON:
         questionText: q.questionText,
         hindiQuestionText: q.hindiQuestionText,
         modelAnswer: q.modelAnswer,
-        studentAnswer: combinedTranscript.slice(0, 300),
+        studentAnswer: 'Evaluation Error',
         maxMarks: q.maxMarks,
         awardedMarks: fallbackAwarded,
-        feedback: 'Standard conceptual coverage evaluated against board key.',
-        keywordsCovered: ['core concept', 'definitions'],
+        feedback: 'AI was unable to evaluate this answer due to formatting or unreadable text.',
+        keywordsCovered: [],
         keywordsMissed: [],
-        stepMarksBreakdown: [
-          { step: 'Conceptual clarity', marks: Math.round(q.maxMarks * 0.5), awarded: Math.round(q.maxMarks * 0.5), comment: 'Understood key principles' },
-          { step: 'Formulation & steps', marks: Math.round(q.maxMarks * 0.5), awarded: fallbackAwarded - Math.round(q.maxMarks * 0.5), comment: 'Clear explanation' },
-        ],
+        stepMarksBreakdown: [],
         diagramCredit: { required: false, awarded: 0, maxMarks: 0, comment: 'N/A' },
-        examinerRemarks: 'Good attempt.',
+        examinerRemarks: 'Could not evaluate.',
       });
     }
   }
@@ -247,14 +286,15 @@ Return STRICT JSON:
   updatedSubmission.completedAt = new Date();
   updatedSubmission.durationMs = updatedSubmission.completedAt.getTime() - updatedSubmission.startedAt.getTime();
 
+  // 👇 NAYA FIX: Subject specific feedback, no more "chemical equations" hardcoded
   updatedSubmission.overallFeedback = percentage >= 80
-    ? 'उत्कृष्ट प्रदर्शन! Your answer structuring, steps, and keyword coverage match the board toppers pattern.'
+    ? 'उत्कृष्ट प्रदर्शन! Your answer structuring and keyword coverage match the board toppers pattern.'
     : percentage >= 60
-    ? 'अच्छा प्रयास! Focus on writing chemical equations and labeling steps clearly to gain full marks.'
-    : 'सुधार की आवश्यकता है। Review the official model answers and practice writing key terminology.';
+    ? 'अच्छा प्रयास! Focus on writing detailed steps and using key terminology to gain full marks.'
+    : 'सुधार की आवश्यकता है। Review the official model answers and practice writing key concepts clearly.';
 
-  updatedSubmission.strengths = ['Good conceptual attempt', 'Legible handwriting'];
-  updatedSubmission.areasOfImprovement = ['More detailed step marks', 'Explicit balance equations'];
+  updatedSubmission.strengths = ['Good attempt', 'Handwriting detected'];
+  updatedSubmission.areasOfImprovement = ['More detailed step marks', 'Include key terminology'];
 
   await updatedSubmission.save();
 
@@ -267,9 +307,7 @@ Return STRICT JSON:
       type: 'subjective_result',
       link: `upload-sheet.html?submissionId=${updatedSubmission._id}`,
     });
-  } catch (notifErr) {
-    // Non-blocking notification
-  }
+  } catch (notifErr) {}
 
   return updatedSubmission;
 }
@@ -287,7 +325,6 @@ export async function getSubmissionResult(submissionId, userId) {
 
 /**
  * NEW: Evaluate answer sheet from base64 images (for frontend upload)
- * This function handles the direct upload flow from the frontend
  */
 export async function evaluateAnswerSheet(pages, userId, options = {}) {
   const {
@@ -316,19 +353,15 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
     year,
     examPhase,
     setCode,
-    // 👇 YAHAN UPDATE KIYA HAI: Agar Cloudinary URL aaya hai toh Base64 DB me save mat karo
     pages: pages.map((p, idx) => {
       const pageData = {
         pageNumber: idx + 1,
         mimeType: p.mimeType || 'image/jpeg',
-        imageUrl: p.imageUrl || '', // URL save karo
+        imageUrl: p.imageUrl || '',
       };
-      
-      // Sirf tab base64 save karo jab URL na ho (backward compatibility ke liye)
       if (!p.imageUrl && p.imageBase64) {
         pageData.imageBase64 = p.imageBase64;
       }
-      
       return pageData;
     }),
     totalPages: pages.length,
@@ -339,7 +372,6 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
   await submission.save();
 
   // Start async evaluation (non-blocking)
-  // We'll run it in background and update status
   setImmediate(async () => {
     try {
       await evaluateSubmission(submission._id);
@@ -407,7 +439,6 @@ export async function retryEvaluation(submissionId, userId) {
     throw new Error('Only failed submissions can be retried');
   }
 
-  // Reset status and re-evaluate
   submission.status = 'uploading';
   submission.errorMessage = '';
   submission.startedAt = new Date();
