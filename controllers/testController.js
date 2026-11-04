@@ -6,10 +6,11 @@ import Question from '../models/Question.js';
 import QuestionFlag from '../models/QuestionFlag.js';
 import GenerationJob from '../models/GenerationJob.js';
 import TestAttempt from '../models/TestAttempt.js';
+import SubjectiveSubmission from '../models/SubjectiveSubmission.js';
 import Notification from '../models/Notification.js';
 import OfficialPaper from '../models/OfficialPaper.js';
 import { queueOrGetChapterJob } from '../services/questionGenerator.js';
-import { autoGenerateChapters } from '../services/chapterGenerator.js'; // <-- NEW IMPORT
+import { autoGenerateChapters } from '../services/chapterGenerator.js';
 import analysisQueue from '../services/analysisQueue.js';
 import { generatePdfToken, verifyPdfToken, buildTestReportPdf } from '../services/pdfService.js';
 import {
@@ -141,7 +142,7 @@ export async function getSubjects(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   GET /api/tests/boards/:boardCode/chapters — DYNAMIC AI FALLBACK
+   GET /api/tests/boards/:boardCode/chapters — STRICT OFFICIAL DATA ONLY
    -------------------------------------------------------------------------- */
 export async function getChapters(req, res) {
   try {
@@ -155,7 +156,6 @@ export async function getChapters(req, res) {
       return res.status(400).json({ error: 'subject query parameter is required' });
     }
 
-    // 1. Try fetching from Database
     let { chapters, usedFallbackChapters } = await getChaptersForSubject({
       boardCode,
       classLevel,
@@ -164,16 +164,10 @@ export async function getChapters(req, res) {
       phase,
     });
 
-    // 2. IF EMPTY: Trigger AI Generation dynamically
-    if (!chapters || chapters.length === 0) {
-      console.log(`⚠️ No chapters found for ${boardCode} - ${subjectCode}. Triggering AI Generation...`);
-      
-      const aiChapters = await autoGenerateChapters(boardCode, classLevel, subjectCode, stream);
-      
-      if (aiChapters && aiChapters.length > 0) {
-        chapters = aiChapters;
-        usedFallbackChapters = false;
-      }
+    // 🚨 FIX: AI Auto-Generation logic removed to prevent hallucinated/fake chapters.
+    // Now it strictly relies on the database. If empty, it returns an empty array.
+    if (!chapters) {
+      chapters = [];
     }
 
     res.json({
@@ -621,6 +615,8 @@ export async function submitAnswer(req, res) {
 export async function finishTest(req, res) {
   try {
     const { attemptId } = req.params;
+    const { subjectiveSubmissionId } = req.body; // 👈 NAYA: Frontend se subjective ID aayegi
+
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id });
 
     if (!attempt) return res.status(404).json({ error: 'Test attempt not found' });
@@ -662,11 +658,35 @@ export async function finishTest(req, res) {
     attempt.finishedAt = new Date();
     attempt.durationMs = attempt.finishedAt.getTime() - attempt.startedAt.getTime();
 
+    // 👇 NAYA LOGIC: Subjective Submission link aur combined score 👇
+    if (subjectiveSubmissionId) {
+      const sub = await SubjectiveSubmission.findById(subjectiveSubmissionId);
+      if (sub) {
+        attempt.subjectiveSubmissionId = sub._id;
+        attempt.subjectiveScore = {
+          totalMarks: sub.totalMarks,
+          obtainedMarks: sub.obtainedMarks,
+          percentage: sub.percentage
+        };
+      }
+    }
+
+    const combinedTotalMarks = attempt.score.totalMarks + (attempt.subjectiveScore?.totalMarks || 0);
+    const combinedObtainedMarks = attempt.score.obtainedMarks + (attempt.subjectiveScore?.obtainedMarks || 0);
+    const combinedPercentage = combinedTotalMarks > 0 ? Math.round((combinedObtainedMarks / combinedTotalMarks) * 100) : 0;
+
+    attempt.combinedScore = {
+      totalMarks: combinedTotalMarks,
+      obtainedMarks: combinedObtainedMarks,
+      percentage: combinedPercentage
+    };
+    // 👆 NAYA LOGIC KHATAM 👆
+
     let performanceLevel = 'Average';
-    if (percentage >= 90) performanceLevel = 'Excellent';
-    else if (percentage >= 75) performanceLevel = 'Good';
-    else if (percentage >= 50) performanceLevel = 'Average';
-    else if (percentage >= 30) performanceLevel = 'Needs Improvement';
+    if (combinedPercentage >= 90) performanceLevel = 'Excellent';
+    else if (combinedPercentage >= 75) performanceLevel = 'Good';
+    else if (combinedPercentage >= 50) performanceLevel = 'Average';
+    else if (combinedPercentage >= 30) performanceLevel = 'Needs Improvement';
     else performanceLevel = 'Critical';
 
     const subtopicStats = {};
@@ -680,13 +700,13 @@ export async function finishTest(req, res) {
     const strengths = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) >= 0.7).map(([name, s]) => `${name} (${s.correct}/${s.total} correct)`);
 
     const recommendations = [];
-    if (percentage < 50) recommendations.push('Focus on revising the weak chapters before attempting more tests.');
+    if (combinedPercentage < 50) recommendations.push('Focus on revising the weak chapters before attempting more tests.');
     if (skipped > 0) recommendations.push(`You skipped ${skipped} questions — try answering all questions next time.`);
     if (hardTotal > 0 && hardCorrect === 0) recommendations.push('Practice more Hard difficulty questions to improve advanced concept understanding.');
-    if (percentage >= 75) recommendations.push('Great work! Try Hard Mode for an extra challenge.');
+    if (combinedPercentage >= 75) recommendations.push('Great work! Try Hard Mode for an extra challenge.');
 
     attempt.aiAnalysis = {
-      overallRemark: `You scored ${obtainedMarks}/${totalMarks} (${percentage}%) with ${correct} correct, ${incorrect} incorrect, and ${skipped} skipped.`,
+      overallRemark: `You scored ${combinedObtainedMarks}/${combinedTotalMarks} (${combinedPercentage}%) overall.`,
       strengths: strengths.length > 0 ? strengths : ['Keep practicing to build strengths!'],
       weakAreas: weakAreas.length > 0 ? weakAreas : ['No specific weak areas detected.'],
       recommendations: recommendations.length > 0 ? recommendations : ['Continue your current study pace.'],
@@ -700,7 +720,7 @@ export async function finishTest(req, res) {
     analysisQueue.enqueueAttempt(attempt._id).catch((err) => console.warn('Auto analysis enqueue warning:', err?.message));
 
     res.json({
-      success: true, attemptId: attempt._id, score: attempt.score, aiAnalysis: attempt.aiAnalysis,
+      success: true, attemptId: attempt._id, score: attempt.score, subjectiveScore: attempt.subjectiveScore, combinedScore: attempt.combinedScore, aiAnalysis: attempt.aiAnalysis,
       aiAnalysisStatus: attempt.aiAnalysisStatus, aiAnalysisEta: attempt.aiAnalysisEta, durationMs: attempt.durationMs,
     });
   } catch (err) {
@@ -733,16 +753,26 @@ export async function getResult(req, res) {
       };
     });
 
+    // 👇 NAYA: Subjective details nikalna result ke liye 👇
+    let subjectiveDetails = null;
+    if (attempt.subjectiveSubmissionId) {
+      subjectiveDetails = await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean();
+    }
+
     res.json({
       success: true,
       result: {
         attemptId: attempt._id, testType: attempt.testType, subjectCode: attempt.subjectCode,
         subjectName: attempt.subjectName, chapterNumber: attempt.chapterNumber, chapterTitle: attempt.chapterTitle,
-        medium: attempt.medium, totalQuestions: attempt.totalQuestions, score: attempt.score,
+        medium: attempt.medium, totalQuestions: attempt.totalQuestions, 
+        score: attempt.score, 
+        subjectiveScore: attempt.subjectiveScore, // 👈 NAYA
+        combinedScore: attempt.combinedScore,     // 👈 NAYA
         aiAnalysis: attempt.aiAnalysis, aiAnalysisStatus: attempt.aiAnalysisStatus || 'completed',
         aiAnalysisEta: attempt.aiAnalysisEta || '', durationMs: attempt.durationMs,
         startedAt: attempt.startedAt, finishedAt: attempt.finishedAt, isHardMode: attempt.isHardMode,
         answers: detailedAnswers,
+        subjectiveDetails: subjectiveDetails // 👈 NAYA: Subjective evaluation ka pura data
       },
     });
   } catch (err) {
@@ -759,14 +789,18 @@ export async function getRecentResults(req, res) {
     const limit = Math.min(20, Number(req.query.limit) || 10);
     const attempts = await TestAttempt.find({ userId: req.user._id, status: 'completed' })
       .sort({ finishedAt: -1 }).limit(limit)
-      .select('testType subjectCode subjectName chapterNumber chapterTitle medium score aiAnalysis durationMs startedAt finishedAt isHardMode totalQuestions').lean();
+      .select('testType subjectCode subjectName chapterNumber chapterTitle medium score subjectiveScore combinedScore aiAnalysis durationMs startedAt finishedAt isHardMode totalQuestions').lean();
 
     res.json({
       success: true, count: attempts.length,
       results: attempts.map((a) => ({
         attemptId: a._id, testType: a.testType, subjectCode: a.subjectCode, subjectName: a.subjectName,
         chapterNumber: a.chapterNumber, chapterTitle: a.chapterTitle, medium: a.medium,
-        totalQuestions: a.totalQuestions, score: a.score, performanceLevel: a.aiAnalysis?.performanceLevel || '',
+        totalQuestions: a.totalQuestions, 
+        score: a.score, 
+        subjectiveScore: a.subjectiveScore,
+        combinedScore: a.combinedScore,
+        performanceLevel: a.aiAnalysis?.performanceLevel || '',
         durationMs: a.durationMs, startedAt: a.startedAt, finishedAt: a.finishedAt, isHardMode: a.isHardMode,
       })),
     });
@@ -858,7 +892,6 @@ export async function queueTestAnalysis(req, res) {
 
 export async function ingestPaper(req, res) {
   try {
-    // FIX: Allow super_admin and admin
     if (!['super_admin', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -895,7 +928,6 @@ export async function ingestPaper(req, res) {
 
 export async function matchPaper(req, res) {
   try {
-    // FIX: Allow super_admin and admin
     if (!['super_admin', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -911,7 +943,6 @@ export async function matchPaper(req, res) {
 
 export async function generateMvviTags(req, res) {
   try {
-    // FIX: Allow super_admin and admin
     if (!['super_admin', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -938,7 +969,6 @@ export async function getAvailablePapersForStudent(req, res) {
 
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode query parameter is required' });
 
-    // Note: The filtering logic is now handled dynamically in paperIngestion.js
     const papers = await getAvailablePapers({
       boardCode, classLevel, subjectCode, stream, medium, examPhase: req.query.examPhase || null,
     });
@@ -979,17 +1009,21 @@ export async function startPaperTest(req, res) {
     const paper = await getPaperForTest(paperId);
     if (!paper) return res.status(404).json({ error: 'Paper not found' });
 
+    // 👇 NAYA LOGIC: Questions ko MCQ aur Subjective mein divide karo 👇
+    const mcqQuestions = paper.questions.filter(q => q.questionType !== 'subjective');
+    const subjectiveQuestions = paper.questions.filter(q => q.questionType === 'subjective');
+
     const attempt = await TestAttempt.create({
       userId: req.user._id, testType: 'full_paper', boardCode: paper.boardCode, classLevel: paper.classLevel,
       subjectCode: paper.subjectCode, subjectName: paper.subjectName, chapterNumber: null,
       chapterTitle: `${paper.paperCode} - ${paper.year} ${paper.examPhase}${paper.setCode ? ` Set ${paper.setCode}` : ''}`,
-      medium: paper.medium, questionIds: [], totalQuestions: paper.totalQuestions, status: 'in_progress',
+      medium: paper.medium, questionIds: [], totalQuestions: mcqQuestions.length, status: 'in_progress', // TotalQuestions ab sirf MCQ count hai
       startedAt: new Date(), isHardMode: !!isHardMode, paperId: paper.paperId, paperYear: paper.year,
       paperExamPhase: paper.examPhase, paperSetCode: paper.setCode,
     });
 
     const questionDocs = await Question.insertMany(
-      paper.questions.map((q) => ({
+      mcqQuestions.map((q) => ({ // Sirf MCQ insert kar rahe hain
         questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options,
         correctOption: q.correctOption, explanation: '', difficulty: q.difficulty, subtopic: q.subtopic,
         boardCode: paper.boardCode, classLevel: paper.classLevel, subjectCode: paper.subjectCode,
@@ -1005,17 +1039,24 @@ export async function startPaperTest(req, res) {
     await attempt.save();
 
     const safeQuestions = questionDocs.map((q, idx) => ({
-      index: idx, id: q._id, questionNumber: paper.questions[idx].questionNumber,
+      index: idx, id: q._id, questionNumber: mcqQuestions[idx].questionNumber,
       questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options,
       difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks, chapterNumber: q.chapterNumber,
-      chapterTitle: q.chapterTitle, isMVVI: q.isMVVI, isVVI: q.isVVI, mvviTag: paper.questions[idx].mvviTag,
+      chapterTitle: q.chapterTitle, isMVVI: q.isMVVI, isVVI: q.isVVI, mvviTag: mcqQuestions[idx].mvviTag,
     }));
 
     res.json({
       success: true, attemptId: attempt._id, testType: 'full_paper', subjectName: paper.subjectName,
-      chapterTitle: attempt.chapterTitle, totalQuestions: paper.totalQuestions, medium: paper.medium,
+      chapterTitle: attempt.chapterTitle, totalQuestions: mcqQuestions.length, medium: paper.medium,
       paperCode: paper.paperCode, year: paper.year, examPhase: paper.examPhase, setCode: paper.setCode,
-      sourceCreditText: paper.sourceCreditText, questions: safeQuestions,
+      sourceCreditText: paper.sourceCreditText, 
+      questions: safeQuestions, // MCQ Questions for the interactive UI
+      subjectiveQuestions: subjectiveQuestions.map(sq => ({ // Subjective Questions for display/upload
+        questionNumber: sq.questionNumber,
+        questionText: sq.questionText,
+        hindiQuestionText: sq.hindiQuestionText,
+        marks: sq.marks
+      }))
     });
   } catch (err) {
     console.error('startPaperTest error:', err);
@@ -1036,7 +1077,6 @@ export async function getPaperAnswers(req, res) {
 
 export async function getPendingReviewPapers(req, res) {
   try {
-    // FIX: Allow super_admin, admin, and subject_admin
     if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -1050,7 +1090,6 @@ export async function getPendingReviewPapers(req, res) {
 
 export async function reviewPaperMatch(req, res) {
   try {
-    // FIX: Allow super_admin, admin, and subject_admin
     if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Admin access required' });
     }

@@ -64,8 +64,12 @@ export async function ingestOfficialPaper(paperData) {
       questionNumber: q.questionNumber || idx + 1,
       questionText: q.questionText,
       hindiQuestionText: q.hindiQuestionText || '',
+      // 👇 NAYA: Question type (MCQ ya Subjective) aur Model Answer 👇
+      questionType: q.questionType || (q.options && q.options.length > 0 ? 'mcq' : 'subjective'),
       options: q.options || [],
-      correctOption: q.correctOption, // FROM OFFICIAL ANSWER KEY ONLY
+      correctOption: q.correctOption || '', // FROM OFFICIAL ANSWER KEY ONLY (Optional for subjective)
+      modelAnswer: q.modelAnswer || '',     // For subjective questions
+      hindiModelAnswer: q.hindiModelAnswer || '',
       marks: q.marks || 1,
       difficulty: q.difficulty || 'Medium',
       subtopic: q.subtopic || '',
@@ -305,23 +309,17 @@ export async function applyMvviVviTags(paperId) {
 }
 
 /**
- * FIXED & DYNAMIC: Get papers available for student
- * Removed strict Date & Status filters so seeded papers appear immediately.
+ * Get papers available for student
  */
 export async function getAvailablePapers({ boardCode, classLevel, subjectCode, stream, medium, examPhase }) {
-  // We only filter by core identifiers. 
-  // If it's in the database for this board/class/subject, we show it.
   const query = {
     boardCode: boardCode.toLowerCase(),
     classLevel: String(classLevel),
     subjectCode: subjectCode.toLowerCase(),
   };
 
-  // Only filter by stream/medium if explicitly provided
   if (stream) query.stream = stream;
   if (medium) query.medium = medium; 
-  
-  // If user selected an exam phase, filter by it
   if (examPhase) query.examPhase = examPhase;
 
   const papers = await OfficialPaper.find(query)
@@ -346,6 +344,7 @@ export async function getPaperForTest(paperId) {
     questionNumber: q.questionNumber,
     questionText: q.questionText,
     hindiQuestionText: q.hindiQuestionText,
+    questionType: q.questionType || (q.options && q.options.length > 0 ? 'mcq' : 'subjective'), // 👈 NAYA
     options: q.options,
     marks: q.marks,
     difficulty: q.difficulty,
@@ -391,8 +390,10 @@ export async function getPaperWithAnswers(paperId) {
       questionNumber: q.questionNumber,
       questionText: q.questionText,
       hindiQuestionText: q.hindiQuestionText,
+      questionType: q.questionType || (q.options && q.options.length > 0 ? 'mcq' : 'subjective'), // 👈 NAYA
       options: q.options,
       correctOption: q.correctOption, 
+      modelAnswer: q.modelAnswer || '', // 👈 NAYA
       marks: q.marks,
       difficulty: q.difficulty,
       subtopic: q.subtopic,

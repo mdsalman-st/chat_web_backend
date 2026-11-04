@@ -41,8 +41,8 @@ export function verifyPdfToken(token, attemptId) {
 
 /**
  * Build PDF stream for a Test Attempt
- * @param {Object} attempt - Completed TestAttempt document (lean or hydrated)
- * @param {Array} questions - Array of populated questions
+ * @param {Object} attempt - Completed TestAttempt document
+ * @param {Array} questions - Array of populated questions (MCQ)
  * @param {Object} student - User document / studentProfile
  * @param {Boolean} wrongOnly - If true, only print incorrect or skipped questions
  * @param {WritableStream} outputStream - Stream to pipe PDF into
@@ -70,7 +70,10 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
       const fontRegular = hasDevanagari ? 'Devanagari' : 'Helvetica';
       const fontBold = hasDevanagari ? 'Devanagari' : 'Helvetica-Bold';
 
-      const score = attempt.score || {};
+      // Use combined score if available, otherwise fallback to MCQ score
+      const score = attempt.combinedScore || attempt.score || {};
+      const mcqScore = attempt.score || {};
+      const subjScore = attempt.subjectiveScore || {};
       const ai = attempt.aiAnalysis || {};
 
       // ── Header Bar ──
@@ -86,7 +89,7 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
 
       // ── Student & Test Info Table ──
       const infoTop = 110;
-      doc.rect(45, infoTop, 505, 60).fill('#f8fafc').stroke('#e2e8f0');
+      doc.rect(45, infoTop, 505, 75).fill('#f8fafc').stroke('#e2e8f0');
 
       doc.fillColor('#475569').font(fontRegular).fontSize(8.5);
       
@@ -103,15 +106,19 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
 
       doc.font(fontRegular).fillColor('#475569').text(`Test Topic: `, 300, infoTop + 10, { continued: true }).font(fontBold).fillColor('#0f172a').text(sChapter);
       doc.font(fontRegular).fillColor('#475569').text(`Test Date: `, 300, infoTop + 26, { continued: true }).font(fontBold).fillColor('#0f172a').text(sDate);
-      doc.font(fontRegular).fillColor('#475569').text(`Score: `, 300, infoTop + 42, { continued: true }).font(fontBold).fillColor('#0f172a').text(`${score.obtainedMarks || 0} / ${score.totalMarks || 0} marks (${score.correct || 0} correct, ${score.incorrect || 0} wrong, ${score.skipped || 0} skipped)`);
+      
+      // Combined Score Breakdown
+      doc.font(fontRegular).fillColor('#475569').text(`MCQ: `, 300, infoTop + 42, { continued: true }).font(fontBold).fillColor('#0f172a').text(`${mcqScore.obtainedMarks || 0}/${mcqScore.totalMarks || 0}`);
+      doc.font(fontRegular).fillColor('#475569').text(`  |  Subj: `, { continued: true }).font(fontBold).fillColor('#0f172a').text(`${subjScore.obtainedMarks || 0}/${subjScore.totalMarks || 0}`);
+      doc.font(fontRegular).fillColor('#475569').text(`  |  Total: `, { continued: true }).font(fontBold).fillColor('#0f172a').text(`${score.obtainedMarks || 0}/${score.totalMarks || 0}`);
 
       // ── AI Diagnostic Analysis Box ──
-      const aiTop = 180;
+      const aiTop = 195;
       doc.rect(45, aiTop, 505, 75).fill('#f0f9ff').stroke('#bae6fd');
       doc.fillColor('#0369a1').font(fontBold).fontSize(10).text('AI Diagnostic Analysis & Feedback', 55, aiTop + 8);
       
       doc.fillColor('#334155').font(fontRegular).fontSize(8.5);
-      const remark = ai.overallRemark || `Completed with ${score.correct || 0} correct out of ${attempt.totalQuestions || 0} questions.`;
+      const remark = ai.overallRemark || `Completed overall.`;
       doc.text(remark, 55, aiTop + 23, { width: 485, lineGap: 2 });
 
       if (ai.strengths?.length) {
@@ -123,10 +130,10 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
         doc.font(fontRegular).fillColor('#334155').text(ai.weakAreas.slice(0, 2).join('; '), { width: 485 });
       }
 
-      // ── Questions Section Title ──
-      let curY = 270;
+      // ── SECTION 1: MCQ Questions Review ──
+      let curY = 285;
       doc.fillColor('#0f172a').font(fontBold).fontSize(11).text(
-        wrongOnly ? 'Review of Incorrect & Skipped Questions' : 'Detailed Question-by-Question Review',
+        wrongOnly ? 'Review of Incorrect & Skipped MCQs' : 'MCQ Answer Review',
         45,
         curY
       );
@@ -142,7 +149,8 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
       }
 
       if (reviewAnswers.length === 0) {
-        doc.fillColor('#16a34a').font(fontRegular).fontSize(10).text('Great job! No incorrect or skipped questions to review.', 45, curY);
+        doc.fillColor('#16a34a').font(fontRegular).fontSize(10).text('Great job! No incorrect or skipped MCQs to review.', 45, curY);
+        curY += 20;
       } else {
         reviewAnswers.forEach((ans, idx) => {
           const q = qMap[ans.questionId?.toString()] || {};
@@ -152,29 +160,23 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
           const tagBg = isSkipped ? '#fef3c7' : (isCorrect ? '#dcfce7' : '#fee2e2');
           const tagColor = isSkipped ? '#b45309' : (isCorrect ? '#15803d' : '#b91c1c');
 
-          // Check for page break
           if (curY > 700) {
             doc.addPage();
             curY = 40;
           }
 
-          // Question Card
           const cardHeight = 90;
           doc.rect(45, curY, 505, cardHeight).fill('#ffffff').stroke('#e2e8f0');
 
-          // Number badge
           doc.rect(52, curY + 8, 20, 16).fill('#0f172a');
           doc.fillColor('#ffffff').font(fontBold).fontSize(8).text(`${idx + 1}`, 52, curY + 12, { width: 20, align: 'center' });
 
-          // Status Badge
           doc.rect(460, curY + 8, 80, 16).fill(tagBg);
           doc.fillColor(tagColor).font(fontBold).fontSize(7.5).text(statusTag, 460, curY + 12, { width: 80, align: 'center' });
 
-          // Question Text (Hindi / English)
           const qText = q.hindiQuestionText || q.questionText || 'Question text unavailable';
           doc.fillColor('#0f172a').font(fontBold).fontSize(9).text(qText, 80, curY + 10, { width: 370 });
 
-          // Answer details
           const ansTop = curY + 32;
           doc.fillColor('#475569').font(fontRegular).fontSize(8);
           doc.text(`Your Choice: `, 55, ansTop, { continued: true })
@@ -187,18 +189,58 @@ export function buildTestReportPdf(attempt, questions = [], student = {}, wrongO
              .font(fontRegular).fillColor('#64748b')
              .text(`   •   Difficulty: ${ans.difficulty || 'Medium'}`);
 
-          // Explanation
           const explanation = q.explanation || 'Refer to textbook concept.';
           doc.fillColor('#0369a1').font(fontBold).fontSize(8).text('Explanation: ', 55, ansTop + 14, { continued: true });
           doc.font(fontRegular).fillColor('#334155').fontSize(7.5).text(explanation, { width: 485, lineGap: 1 });
 
-          // Mistake reason (if any)
           if (ans.mistakeReason) {
             doc.fillColor('#b91c1c').font(fontBold).fontSize(7.5).text('Mistake Insight: ', 55, ansTop + 38, { continued: true });
             doc.font(fontRegular).fillColor('#7f1d1d').fontSize(7.5).text(ans.mistakeReason, { width: 485 });
           }
 
           curY += cardHeight + 10;
+        });
+      }
+
+      // ── SECTION 2: Subjective Questions Review ──
+      if (attempt.subjectiveDetails && attempt.subjectiveDetails.evaluations && attempt.subjectiveDetails.evaluations.length > 0) {
+        curY += 15;
+        if (curY > 680) { doc.addPage(); curY = 40; }
+
+        doc.fillColor('#0f172a').font(fontBold).fontSize(11).text('Subjective Answer Sheet Evaluation', 45, curY);
+        curY += 18;
+
+        attempt.subjectiveDetails.evaluations.forEach((evalData, idx) => {
+          if (curY > 660) { doc.addPage(); curY = 40; }
+
+          // Card background
+          doc.rect(45, curY, 505, 140).fill('#f8fafc').stroke('#cbd5e1');
+          
+          // Header
+          doc.rect(45, curY, 505, 20).fill('#e2e8f0');
+          doc.fillColor('#0f172a').font(fontBold).fontSize(9).text(`Q${evalData.questionNumber || idx+1}: ${evalData.questionText}`, 55, curY + 6, { width: 400 });
+          
+          // Marks Badge
+          doc.rect(460, curY + 3, 80, 14).fill('#cbd5e1');
+          doc.fillColor('#0f172a').font(fontBold).fontSize(8).text(`Marks: ${evalData.awardedMarks}/${evalData.maxMarks}`, 460, curY + 6, { width: 80, align: 'center' });
+
+          curY += 25;
+
+          // Student Answer
+          doc.fillColor('#475569').font(fontBold).fontSize(8).text('Transcribed Answer:', 55, curY);
+          doc.font(fontRegular).fillColor('#0f172a').fontSize(8).text(evalData.studentAnswer || 'Not found', 55, curY + 10, { width: 485, height: 35, ellipsis: true });
+          curY += 45;
+
+          // Model Answer
+          doc.fillColor('#15803d').font(fontBold).fontSize(8).text('Official Model Answer:', 55, curY);
+          doc.font(fontRegular).fillColor('#334155').fontSize(8).text(evalData.modelAnswer || 'Standard board solution', 55, curY + 10, { width: 485, height: 35, ellipsis: true });
+          curY += 45;
+
+          // Teacher Note
+          doc.fillColor('#0369a1').font(fontBold).fontSize(8).text('AI Feedback: ', 55, curY, { continued: true });
+          doc.font(fontRegular).fillColor('#334155').fontSize(7.5).text(evalData.feedback || evalData.examinerRemarks || 'Good attempt.', { width: 485 });
+
+          curY += 25; // Next card
         });
       }
 

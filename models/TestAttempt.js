@@ -110,6 +110,26 @@ const testAttemptSchema = new mongoose.Schema(
     paperYear: { type: Number, default: null },
     paperExamPhase: { type: String, default: null },
     paperSetCode: { type: String, default: null },
+
+    // ==========================================
+    // 👇 NAYA: DIGITAL BOARD EXAM - SUBJECTIVE LINK 👇
+    // ==========================================
+    subjectiveSubmissionId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'SubjectiveSubmission', 
+      default: null 
+    },
+    subjectiveScore: {
+      totalMarks: { type: Number, default: 0 },
+      obtainedMarks: { type: Number, default: 0 },
+      percentage: { type: Number, default: 0 }
+    },
+    combinedScore: {
+      totalMarks: { type: Number, default: 0 },
+      obtainedMarks: { type: Number, default: 0 },
+      percentage: { type: Number, default: 0 }
+    }
+    // ==========================================
   },
   {
     timestamps: true,

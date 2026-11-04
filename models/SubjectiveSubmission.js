@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 const pageEntrySchema = new mongoose.Schema(
   {
     pageNumber: { type: Number, required: true },
-    imageUrl: { type: String, required: true }, // 👈 NAYA: Cloudinary ka URL yahan save hoga
-    imageBase64: { type: String }, // 👈 Purana field, par ab compulsory nahi hai
+    imageUrl: { type: String, required: true }, // Cloudinary ka URL yahan save hoga
+    imageBase64: { type: String }, // Purana field, par ab compulsory nahi hai
     mimeType: { type: String, default: 'image/jpeg' },
     ocrText: { type: String, default: '' },
     ocrConfidence: { type: Number, default: 0 },
@@ -55,6 +55,13 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
+    },
+    // 👇 NAYA FIELD: TestAttempt se link karne ke liye (Digital Board Exam) 👇
+    attemptId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TestAttempt',
+      default: null,
       index: true,
     },
     boardCode: { type: String, required: true, lowercase: true, trim: true, index: true },

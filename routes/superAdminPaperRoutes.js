@@ -4,6 +4,7 @@ import path from 'path';
 import OfficialPaper from '../models/OfficialPaper.js';
 import { uploadPdf } from '../middleware/uploadPdf.js';
 import { extractTextFromPdf } from '../services/pdfTextExtractor.js';
+import { parseTextToQuestions } from '../services/pdfParserService.js'; // 👈 NAYA IMPORT
 import { v2 as cloudinary } from 'cloudinary';
 import { protect } from '../middleware/authMiddleware.js'; 
 
@@ -20,7 +21,6 @@ const superAdminOnly = (req, res, next) => {
   next();
 };
 
-// ⬇️ 1. UPLOAD (No subject restrictions)
 router.post('/upload', protect, superAdminOnly, uploadPdf, async (req, res) => {
   try {
     if (!req.file) {
@@ -55,19 +55,37 @@ router.post('/upload', protect, superAdminOnly, uploadPdf, async (req, res) => {
       originalName: req.file.originalname,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
-      status: 'ingested',
+      status: 'processing', // 👈 NAYA
       ingestedBy: req.user._id, 
     });
 
-    // AI Text Extraction (handles both Cloudinary URL and local path)
+    // AI Text Extraction & Parsing
     extractTextFromPdf(req.file.path)
       .then(async (text) => {
         newPaper.extractedText = text;
         await newPaper.save();
-      })
-      .catch(err => console.error(`[Text Extraction Failed]`, err));
 
-    res.status(201).json({ message: 'Super Admin: Paper upload ho gaya!', paper: newPaper });
+        if (text && text.length > 50) {
+          const parsedQuestions = await parseTextToQuestions(text, subjectName, boardCode, classLevel);
+          
+          if (parsedQuestions.length > 0) {
+            newPaper.questions = parsedQuestions;
+            newPaper.totalQuestions = parsedQuestions.length;
+            newPaper.totalMarks = parsedQuestions.reduce((sum, q) => sum + (q.marks || 1), 0);
+            newPaper.status = 'ingested';
+          } else {
+            newPaper.status = 'failed';
+          }
+          await newPaper.save();
+        }
+      })
+      .catch(async (err) => {
+        console.error(`[Text Extraction Failed]`, err);
+        newPaper.status = 'failed';
+        await newPaper.save();
+      });
+
+    res.status(201).json({ message: 'Super Admin: Paper upload ho gaya! AI background mein process kar raha hai.', paper: newPaper });
 
   } catch (error) {
     if (req.file) {
@@ -81,7 +99,6 @@ router.post('/upload', protect, superAdminOnly, uploadPdf, async (req, res) => {
   }
 });
 
-// ⬇️ 2. GET (Saare papers)
 router.get('/', protect, superAdminOnly, async (req, res) => {
   try {
     const papers = await OfficialPaper.find()
@@ -93,7 +110,6 @@ router.get('/', protect, superAdminOnly, async (req, res) => {
   }
 });
 
-// ⬇️ 3. DELETE (Kisi ka bhi)
 router.delete('/:id', protect, superAdminOnly, async (req, res) => {
   try {
     const paper = await OfficialPaper.findById(req.params.id);

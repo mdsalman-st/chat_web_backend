@@ -9,14 +9,26 @@ import mongoose from 'mongoose';
 const paperQuestionSchema = new mongoose.Schema(
   {
     questionNumber: { type: Number, required: true },
+    // 👇 NAYA FIELD: Question Type (MCQ ya Subjective) 👇
+    questionType: { 
+      type: String, 
+      enum: ['mcq', 'subjective'], 
+      default: 'mcq' 
+    },
     questionText: { type: String, required: true },
     hindiQuestionText: { type: String },
+    // Options sirf MCQ ke liye honge
     options: [{
       key: { type: String, required: true },
       text: { type: String, required: true },
       hindiText: { type: String },
     }],
-    correctOption: { type: String, required: true }, // From official answer key
+    // Correct option sirf MCQ ke liye hoga (isliye required: true hata diya)
+    correctOption: { type: String }, 
+    // 👇 NAYA FIELD: Subjective questions ke liye Official Model Answer 👇
+    modelAnswer: { type: String, default: '' },
+    hindiModelAnswer: { type: String, default: '' },
+    
     marks: { type: Number, default: 1 },
     difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], default: 'Medium' },
     subtopic: { type: String, default: '' },
