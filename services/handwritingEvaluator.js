@@ -3,13 +3,15 @@ import OfficialPaper from '../models/OfficialPaper.js';
 import Notification from '../models/Notification.js';
 import { executeGeminiVisionWithFailover, executeAiJsonWithFailover } from '../utils/aiClient.js';
 
+// 👇 PDF Parse ke liye import 👇
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
+
 /**
  * Phase 6: Handwriting OCR & Rubric-based Subjective Evaluator Service
  */
 
-/**
- * OCR single page image using Gemini Vision
- */
 export async function processPageOCR(submissionId, pageNumber) {
   const submission = await SubjectiveSubmission.findById(submissionId);
   if (!submission) {
@@ -25,6 +27,32 @@ export async function processPageOCR(submissionId, pageNumber) {
   await submission.save();
 
   try {
+    // 👇 NAYA: AGAR PDF HAI TOH DIRECT TEXT NIKALO 👇
+    if (page.mimeType === 'application/pdf') {
+      try {
+        let pdfBuffer;
+        if (page.imageBase64) {
+          pdfBuffer = Buffer.from(page.imageBase64, 'base64');
+        } else if (page.imageUrl) {
+          const res = await fetch(page.imageUrl);
+          pdfBuffer = Buffer.from(await res.arrayBuffer());
+        }
+        
+        if (pdfBuffer) {
+          const pdfData = await pdfParse(pdfBuffer);
+          page.ocrText = pdfData.text || '';
+          page.ocrConfidence = 99;
+          page.processingStatus = 'completed';
+          await submission.save();
+          return page.ocrText;
+        }
+      } catch (pdfErr) {
+        console.error("PDF Parse Error:", pdfErr);
+        // Agar PDF parse fail ho jaye, toh neeche wala Gemini try karega
+      }
+    }
+
+    // Agar Image hai, toh Gemini Vision use karo
     const prompt = `You are a high-precision OCR engine specializing in Indian state board handwritten examination answer copies in Hindi (Devanagari) and English.
 Transcribe all handwritten student answers visible on this page accurately.
 Preserve question numbers (e.g., "प्रश्न 1", "Q1", "Ans 2") and mathematical or chemical notations.
@@ -38,12 +66,10 @@ Return STRICT JSON matching this schema:
   "detectedQuestions": [1, 2]
 }`;
 
-    // Agar DB me base64 nahi hai, toh Cloudinary URL se fetch karo
     let imageBase64Data = page.imageBase64;
     
     if (!imageBase64Data && page.imageUrl) {
       try {
-        console.log(`Fetching image from Cloudinary for OCR...`);
         const response = await fetch(page.imageUrl);
         const arrayBuffer = await response.arrayBuffer();
         imageBase64Data = Buffer.from(arrayBuffer).toString('base64');
@@ -75,9 +101,6 @@ Return STRICT JSON matching this schema:
   }
 }
 
-/**
- * Run full evaluation across all transcribed pages against board marking scheme
- */
 export async function evaluateSubmission(submissionId) {
   const submission = await SubjectiveSubmission.findById(submissionId);
   if (!submission) {
@@ -87,18 +110,15 @@ export async function evaluateSubmission(submissionId) {
   submission.status = 'ocr_processing';
   await submission.save();
 
-  // 1. Process OCR for all pages sequentially
   for (const page of submission.pages) {
     if (page.processingStatus === 'pending') {
       await processPageOCR(submissionId, page.pageNumber);
     }
   }
 
-  // Refresh submission
   const updatedSubmission = await SubjectiveSubmission.findById(submissionId);
   updatedSubmission.status = 'evaluating';
 
-  // Combine full student transcript
   const combinedTranscript = updatedSubmission.pages
     .sort((a, b) => a.pageNumber - b.pageNumber)
     .map((p) => `--- [Page ${p.pageNumber}] ---\n${p.ocrText}`)
@@ -107,7 +127,6 @@ export async function evaluateSubmission(submissionId) {
   updatedSubmission.combinedTranscript = combinedTranscript;
   await updatedSubmission.save();
 
-  // 2. Fetch official paper questions or infer from transcript
   let targetQuestions = [];
   if (updatedSubmission.paperId) {
     const paper = await OfficialPaper.findById(updatedSubmission.paperId).lean();
@@ -122,11 +141,9 @@ export async function evaluateSubmission(submissionId) {
     }
   }
 
-  // 👇 NAYA FIX: Agar paper select nahi kiya, toh AI khud transcript se question guess karega
   if (targetQuestions.length === 0) {
     const subjectName = updatedSubmission.subjectName || updatedSubmission.subjectCode || 'General';
     
-    // Agar page blank hai toh direct fail kar do
     if (!combinedTranscript || combinedTranscript.trim().length < 10) {
        updatedSubmission.status = 'completed';
        updatedSubmission.totalMarks = 0;
@@ -171,7 +188,6 @@ Return JSON:
       console.error("Failed to infer questions from transcript", e);
     }
 
-    // Agar phir bhi AI questions na bana paye
     if (targetQuestions.length === 0) {
       targetQuestions = [{
         questionNumber: 1,
@@ -183,7 +199,6 @@ Return JSON:
     }
   }
 
-  // 3. AI Rubric Evaluation using failover
   const evaluations = [];
   let totalMaxMarks = 0;
   let totalAwardedMarks = 0;
@@ -254,7 +269,6 @@ Return STRICT JSON:
     } catch (evalErr) {
       console.warn(`Fallback evaluation for Q${q.questionNumber}:`, evalErr.message);
       
-      // 👇 NAYA FIX: Fail hone par 0 marks do, 75% nahi!
       const fallbackAwarded = 0; 
       totalAwardedMarks += fallbackAwarded;
 
@@ -276,7 +290,6 @@ Return STRICT JSON:
     }
   }
 
-  // 4. Finalize submission
   const percentage = totalMaxMarks > 0 ? Math.round((totalAwardedMarks / totalMaxMarks) * 100) : 0;
   updatedSubmission.evaluations = evaluations;
   updatedSubmission.totalMarks = totalMaxMarks;
@@ -286,7 +299,6 @@ Return STRICT JSON:
   updatedSubmission.completedAt = new Date();
   updatedSubmission.durationMs = updatedSubmission.completedAt.getTime() - updatedSubmission.startedAt.getTime();
 
-  // 👇 NAYA FIX: Subject specific feedback, no more "chemical equations" hardcoded
   updatedSubmission.overallFeedback = percentage >= 80
     ? 'उत्कृष्ट प्रदर्शन! Your answer structuring and keyword coverage match the board toppers pattern.'
     : percentage >= 60
@@ -298,7 +310,6 @@ Return STRICT JSON:
 
   await updatedSubmission.save();
 
-  // Create in-app notification for the student
   try {
     await Notification.create({
       userId: updatedSubmission.userId,
@@ -312,9 +323,6 @@ Return STRICT JSON:
   return updatedSubmission;
 }
 
-/**
- * Retrieve submission with formatted results
- */
 export async function getSubmissionResult(submissionId, userId) {
   const submission = await SubjectiveSubmission.findOne({ _id: submissionId, userId }).lean();
   if (!submission) {
@@ -323,9 +331,6 @@ export async function getSubmissionResult(submissionId, userId) {
   return submission;
 }
 
-/**
- * NEW: Evaluate answer sheet from base64 images (for frontend upload)
- */
 export async function evaluateAnswerSheet(pages, userId, options = {}) {
   const {
     boardCode = 'bseb',
@@ -340,7 +345,6 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
     setCode = '',
   } = options;
 
-  // Create submission record
   const submission = new SubjectiveSubmission({
     userId,
     boardCode,
@@ -371,7 +375,6 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
 
   await submission.save();
 
-  // Start async evaluation (non-blocking)
   setImmediate(async () => {
     try {
       await evaluateSubmission(submission._id);
@@ -393,9 +396,6 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
   };
 }
 
-/**
- * Get submission status for polling
- */
 export async function getSubmissionStatus(submissionId, userId) {
   const submission = await SubjectiveSubmission.findOne({ _id: submissionId, userId }).lean();
   if (!submission) {
@@ -411,9 +411,6 @@ export async function getSubmissionStatus(submissionId, userId) {
   };
 }
 
-/**
- * Get recent submissions for user
- */
 export async function getRecentSubmissions(userId, limit = 10) {
   const submissions = await SubjectiveSubmission.find({ userId })
     .sort({ createdAt: -1 })
@@ -426,9 +423,6 @@ export async function getRecentSubmissions(userId, limit = 10) {
   };
 }
 
-/**
- * Retry evaluation for failed submission
- */
 export async function retryEvaluation(submissionId, userId) {
   const submission = await SubjectiveSubmission.findOne({ _id: submissionId, userId });
   if (!submission) {

@@ -6,13 +6,8 @@ import {
   retryEvaluation,
 } from '../services/handwritingEvaluator.js';
 
-// 👈 Cloudinary Uploader Import kiya
 import { uploadBase64Image } from '../services/cloudinaryUploader.js';
 
-/**
- * POST /api/subjective/upload
- * Upload answer sheet pages (base64 images) for AI evaluation
- */
 export async function uploadAnswerSheet(req, res) {
   try {
     const userId = req.user._id;
@@ -21,7 +16,6 @@ export async function uploadAnswerSheet(req, res) {
       paperId, paperCode, year, examPhase, setCode, pages,
     } = req.body;
 
-    // Validate required fields
     if (!pages || !Array.isArray(pages) || pages.length === 0) {
       return res.status(400).json({ error: 'No pages provided' });
     }
@@ -30,29 +24,24 @@ export async function uploadAnswerSheet(req, res) {
       return res.status(400).json({ error: 'subjectCode is required' });
     }
 
-    // Validate each page has base64 image
     for (const page of pages) {
       if (!page.imageBase64) {
         return res.status(400).json({ error: 'Each page must have imageBase64' });
       }
     }
 
-    // 👇 NAYA LOGIC: Base64 images ko Cloudinary par upload karo 👇
     const processedPages = [];
     for (const page of pages) {
-      // Cloudinary par upload karke URL le rahe hain
-      const cloudinaryUrl = await uploadBase64Image(page.imageBase64, 'nexus_answersheets');
+      // 👇 YAHAN mimeType PASS KIYA HAI 👇
+      const cloudinaryUrl = await uploadBase64Image(page.imageBase64, 'nexus_answersheets', page.mimeType);
       
       processedPages.push({
         ...page,
         imageUrl: cloudinaryUrl, 
-        // imageBase64 ko database me save NAHI karenge taaki Atlas na bhare
-        // Par AI evaluator ke liye hum ise in-memory rakh sakte hain
         imageBase64: page.imageBase64 
       });
     }
 
-    // Ab in processed pages ko AI evaluation ke liye bhejenge
     const result = await evaluateAnswerSheet(processedPages, userId, {
       boardCode, classLevel, subjectCode, subjectName, medium,
       paperId, paperCode, year, examPhase, setCode,
@@ -65,9 +54,6 @@ export async function uploadAnswerSheet(req, res) {
   }
 }
 
-/**
- * GET /api/subjective/:submissionId/status
- */
 export async function getSubmissionStatusController(req, res) {
   try {
     const userId = req.user._id;
@@ -80,9 +66,6 @@ export async function getSubmissionStatusController(req, res) {
   }
 }
 
-/**
- * GET /api/subjective/:submissionId/result
- */
 export async function getSubmissionResultController(req, res) {
   try {
     const userId = req.user._id;
@@ -95,9 +78,6 @@ export async function getSubmissionResultController(req, res) {
   }
 }
 
-/**
- * GET /api/subjective/recent
- */
 export async function getRecentSubmissionsController(req, res) {
   try {
     const userId = req.user._id;
@@ -110,9 +90,6 @@ export async function getRecentSubmissionsController(req, res) {
   }
 }
 
-/**
- * POST /api/subjective/:submissionId/retry
- */
 export async function retryEvaluationController(req, res) {
   try {
     const userId = req.user._id;

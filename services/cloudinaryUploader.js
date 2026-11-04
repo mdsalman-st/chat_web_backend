@@ -9,37 +9,40 @@ cloudinary.config({
 });
 
 /**
- * Base64 image string ko Cloudinary par upload karta hai
- * @param {string} base64String - Base64 image (data:image/jpeg;base64,...)
- * @param {string} folderName - Cloudinary folder name
+ * Base64 string ko Cloudinary par upload karta hai (Image ya PDF)
+ * @param {string} base64String 
+ * @param {string} folderName 
+ * @param {string} mimeType - 'image/jpeg' ya 'application/pdf'
  * @returns {Promise<string>} - Cloudinary URL
  */
-export async function uploadBase64Image(base64String, folderName = 'nexus_answersheets') {
+export async function uploadBase64Image(base64String, folderName = 'nexus_answersheets', mimeType = 'image/jpeg') {
   try {
-    if (!base64String) {
-      throw new Error("Base64 string is empty");
-    }
+    if (!base64String) throw new Error("Base64 string is empty");
 
-    // Agar string me data:image prefix nahi hai, toh add karo
     let uploadString = base64String;
-    if (!base64String.startsWith('data:image')) {
-      uploadString = `data:image/jpeg;base64,${base64String}`;
+    // Agar base64 string me 'data:' prefix nahi hai, toh mimeType ke hisaab se add karo
+    if (!base64String.startsWith('data:')) {
+      uploadString = `data:${mimeType};base64,${base64String}`;
     }
 
-    const result = await cloudinary.uploader.upload(uploadString, {
+    const uploadOptions = {
       folder: folderName,
-      resource_type: 'image',
-      timeout: 120000, // 👈 2 Minute timeout (Badi photos ke liye zaroori hai)
-      transformation: [
-        { width: 1600, crop: "limit" }, // Max width 1600px (Compression)
-        { quality: "auto" }             // Auto quality
-      ]
-    });
-    
+      resource_type: 'auto', // 👈 AUTO use karo taaki Cloudinary khud pehchane
+      timeout: 120000, 
+    };
+
+    // Sirf images par compression lagao
+    if (mimeType.startsWith('image/')) {
+      uploadOptions.transformation = [
+        { width: 1600, crop: "limit" },
+        { quality: "auto" }
+      ];
+    }
+
+    const result = await cloudinary.uploader.upload(uploadString, uploadOptions);
     return result.secure_url; 
   } catch (error) {
     console.error("Cloudinary Upload Error Details:", error);
-    // Exact error message bhejo frontend ko
-    throw new Error(error.message || "Image upload failed to Cloudinary");
+    throw new Error(error.message || "File upload failed to Cloudinary");
   }
 }
