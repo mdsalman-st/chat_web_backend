@@ -19,6 +19,7 @@ import adminRoute from './routes/admin.js';
 // 👇 YAHAN NAYE ROUTES IMPORT KIYE HAIN 👇
 import adminPaperRoutes from './routes/adminPaperRoutes.js';
 import superAdminPaperRoutes from './routes/superAdminPaperRoutes.js';
+import adminExtrasRoutes from './routes/adminExtras.js';
 
 dotenv.config();
 
@@ -124,7 +125,8 @@ app.use('/api/superadmin/papers', superAdminPaperRoutes);
 
 // Purane routes waise hi hain
 app.use('/api/admin', paperRoute);
-app.use('/api/admin', adminRoute); 
+app.use('/api/admin', adminRoute);
+app.use('/api/admin', adminExtrasRoutes); 
 app.use('/api/student', paperRoute);
 
 /* ---------- 404 ---------- */

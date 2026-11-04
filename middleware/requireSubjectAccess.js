@@ -1,15 +1,23 @@
 /**
  * Middleware to restrict Admins to only upload papers for their assigned subject.
- * Super Admin bypasses this check.
+ * Super Admin & Unrestricted Platform Admins bypass this check.
  */
 export const requireSubjectAccess = (req, res, next) => {
-  // Agar user super_admin hai, toh usko koi rok nahi sakta
-  if (req.user.role === 'super_admin' || req.user.role === 'superadmin') {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  // 1. Super Admin ya General Admin (jiska assignedSubject set nahi hai, full platform access)
+  if (
+    req.user.role === 'super_admin' || 
+    req.user.role === 'superadmin' || 
+    (req.user.role === 'admin' && !req.user.assignedSubject)
+  ) {
     return next();
   }
 
-  // Agar user normal admin hai
-  if (req.user.role === 'admin' || req.user.role === 'subject_admin') {
+  // 2. Agar user subject_admin hai ya restricted admin jiska assignedSubject specified hai
+  if (req.user.role === 'subject_admin' || (req.user.role === 'admin' && req.user.assignedSubject)) {
     const adminSubject = req.user.assignedSubject; // e.g., 'mathematics'
     const uploadSubject = req.body.subjectCode;    // e.g., 'mathematics'
 
@@ -25,9 +33,9 @@ export const requireSubjectAccess = (req, res, next) => {
       });
     }
 
-    return next(); // Sab theek hai, aage badho
+    return next(); // Subject match ho gaya, aage badho
   }
 
-  // Agar koi aur role hai (student, employee, etc.)
+  // 3. Agar koi aur role hai (student, employee, etc.)
   return res.status(403).json({ message: 'Aapko iski permission nahi hai.' });
 };

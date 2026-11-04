@@ -5,9 +5,8 @@ import OfficialPaper from '../models/OfficialPaper.js';
 import { uploadPdf } from '../middleware/uploadPdf.js';
 import { requireSubjectAccess } from '../middleware/requireSubjectAccess.js';
 import { extractTextFromPdf } from '../services/pdfTextExtractor.js';
+import { v2 as cloudinary } from 'cloudinary';
 
-// 👇 YAHAN HUMNE TUMHARE MIDDLEWARE IMPORT KIYE HAIN 👇
-// (Agar tumhari file mein function ka naam 'protect' ya 'adminOnly' ke alawa kuch aur hai, toh sirf naam change kar lena)
 import { protect } from '../middleware/authMiddleware.js'; 
 import { adminOnly } from '../middleware/adminMiddleware.js'; 
 
@@ -27,14 +26,22 @@ router.post(
       }
 
       const { 
-        title, boardCode, classLevel, subjectCode, subjectName, 
+        boardCode, classLevel, subjectCode, subjectName, 
         year, examPhase, medium, setCode 
       } = req.body;
 
       if (!boardCode || !classLevel || !subjectCode || !subjectName || !year || !examPhase) {
-        fs.unlink(req.file.path, () => {});
+        if (req.file.path && req.file.path.startsWith('http')) {
+          await cloudinary.uploader.destroy(req.file.filename, { resource_type: 'raw' }).catch(() => {});
+        } else if (req.file.path) {
+          fs.unlink(req.file.path, () => {});
+        }
         return res.status(400).json({ message: 'Board, Class, Subject, Year, aur Exam Phase zaroori hain.' });
       }
+
+      const fileUrl = (req.file.path && (req.file.path.startsWith('http://') || req.file.path.startsWith('https://')))
+        ? req.file.path
+        : `/uploads/papers/${req.file.filename}`;
 
       const newPaper = await OfficialPaper.create({
         boardCode,
@@ -45,7 +52,7 @@ router.post(
         year: Number(year),
         examPhase,
         setCode: setCode || null,
-        fileUrl: `/uploads/papers/${req.file.filename}`,
+        fileUrl,
         originalName: req.file.originalname,
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
@@ -53,7 +60,7 @@ router.post(
         ingestedBy: req.user._id, 
       });
 
-      // Background mein text extract karo
+      // Background mein text extract karo (handles both URL and local path)
       extractTextFromPdf(req.file.path)
         .then(async (text) => {
           newPaper.extractedText = text;
@@ -69,7 +76,13 @@ router.post(
       });
 
     } catch (error) {
-      if (req.file) fs.unlink(req.file.path, () => {});
+      if (req.file) {
+        if (req.file.path && req.file.path.startsWith('http')) {
+          await cloudinary.uploader.destroy(req.file.filename, { resource_type: 'raw' }).catch(() => {});
+        } else if (req.file.path) {
+          fs.unlink(req.file.path, () => {});
+        }
+      }
       res.status(500).json({ message: error.message });
     }
   }
@@ -107,10 +120,17 @@ router.delete(
       }
 
       if (paper.fileUrl) {
-        const filePath = path.resolve('.' + paper.fileUrl);
-        fs.unlink(filePath, (err) => {
-          if (err) console.error('File delete error:', err);
-        });
+        if (paper.fileUrl.startsWith('http')) {
+          const parts = paper.fileUrl.split('/');
+          const lastPart = parts.pop();
+          const publicId = `nexus_papers/${lastPart.split('.')[0]}`;
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' }).catch(() => {});
+        } else {
+          const filePath = path.resolve('.' + paper.fileUrl);
+          fs.unlink(filePath, (err) => {
+            if (err) console.error('File delete error:', err);
+          });
+        }
       }
 
       await paper.deleteOne();

@@ -21,6 +21,7 @@ export function authorize(...allowedRoles) {
   };
 }
 
-export const adminOnly = authorize('admin');
-export const teacherOrAdmin = authorize('teacher', 'admin');
-export const studentOrAdmin = authorize('student', 'admin');
+export const adminOnly = authorize('admin', 'super_admin', 'superadmin', 'subject_admin');
+export const superAdminOnly = authorize('super_admin', 'superadmin', 'admin');
+export const teacherOrAdmin = authorize('teacher', 'admin', 'super_admin', 'superadmin');
+export const studentOrAdmin = authorize('student', 'admin', 'super_admin', 'superadmin');
