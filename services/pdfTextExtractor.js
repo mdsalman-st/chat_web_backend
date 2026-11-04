@@ -1,20 +1,21 @@
-import fs from 'fs';
-import pdfParse from 'pdf-parse';
+// backend/services/pdfTextExtractor.js
+import { createRequire } from 'module';
+
+// 👇 Ye line pdf-parse wale error ko fix karegi 👇
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
 
 /**
  * PDF file se text extract karta hai.
  * AI is text ka use karke board-specific questions generate karega.
  * 
- * @param {string} filePath - Server par saved PDF ka path
+ * @param {Buffer} pdfBuffer - PDF ka data buffer (Cloudinary se fetch kiya hua)
  * @returns {Promise<string>} - Extracted text
  */
-export async function extractTextFromPdf(filePath) {
+export async function extractTextFromPdf(pdfBuffer) {
   try {
-    // File ko buffer mein read karo
-    const dataBuffer = fs.readFileSync(filePath);
-    
     // PDF parse karo
-    const pdfData = await pdfParse(dataBuffer);
+    const pdfData = await pdfParse(pdfBuffer);
     
     // Text return karo (agar text nahi hai, toh empty string)
     return (pdfData.text || '').trim();
