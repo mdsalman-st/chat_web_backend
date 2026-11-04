@@ -6,6 +6,9 @@ import {
   retryEvaluation,
 } from '../services/handwritingEvaluator.js';
 
+// 👈 Cloudinary Uploader Import kiya
+import { uploadBase64Image } from '../services/cloudinaryUploader.js';
+
 /**
  * POST /api/subjective/upload
  * Upload answer sheet pages (base64 images) for AI evaluation
@@ -14,17 +17,8 @@ export async function uploadAnswerSheet(req, res) {
   try {
     const userId = req.user._id;
     const {
-      boardCode,
-      classLevel,
-      subjectCode,
-      subjectName,
-      medium,
-      paperId,
-      paperCode,
-      year,
-      examPhase,
-      setCode,
-      pages,
+      boardCode, classLevel, subjectCode, subjectName, medium,
+      paperId, paperCode, year, examPhase, setCode, pages,
     } = req.body;
 
     // Validate required fields
@@ -43,17 +37,25 @@ export async function uploadAnswerSheet(req, res) {
       }
     }
 
-    const result = await evaluateAnswerSheet(pages, userId, {
-      boardCode,
-      classLevel,
-      subjectCode,
-      subjectName,
-      medium,
-      paperId,
-      paperCode,
-      year,
-      examPhase,
-      setCode,
+    // 👇 NAYA LOGIC: Base64 images ko Cloudinary par upload karo 👇
+    const processedPages = [];
+    for (const page of pages) {
+      // Cloudinary par upload karke URL le rahe hain
+      const cloudinaryUrl = await uploadBase64Image(page.imageBase64, 'nexus_answersheets');
+      
+      processedPages.push({
+        ...page,
+        imageUrl: cloudinaryUrl, 
+        // imageBase64 ko database me save NAHI karenge taaki Atlas na bhare
+        // Par AI evaluator ke liye hum ise in-memory rakh sakte hain
+        imageBase64: page.imageBase64 
+      });
+    }
+
+    // Ab in processed pages ko AI evaluation ke liye bhejenge
+    const result = await evaluateAnswerSheet(processedPages, userId, {
+      boardCode, classLevel, subjectCode, subjectName, medium,
+      paperId, paperCode, year, examPhase, setCode,
     });
 
     res.status(201).json(result);
@@ -65,13 +67,11 @@ export async function uploadAnswerSheet(req, res) {
 
 /**
  * GET /api/subjective/:submissionId/status
- * Get evaluation status for polling
  */
 export async function getSubmissionStatusController(req, res) {
   try {
     const userId = req.user._id;
     const { submissionId } = req.params;
-
     const result = await getSubmissionStatus(submissionId, userId);
     res.json(result);
   } catch (error) {
@@ -82,13 +82,11 @@ export async function getSubmissionStatusController(req, res) {
 
 /**
  * GET /api/subjective/:submissionId/result
- * Get full evaluation result
  */
 export async function getSubmissionResultController(req, res) {
   try {
     const userId = req.user._id;
     const { submissionId } = req.params;
-
     const result = await getSubmissionResult(submissionId, userId);
     res.json({ success: true, submission: result });
   } catch (error) {
@@ -99,13 +97,11 @@ export async function getSubmissionResultController(req, res) {
 
 /**
  * GET /api/subjective/recent
- * Get recent submissions for user
  */
 export async function getRecentSubmissionsController(req, res) {
   try {
     const userId = req.user._id;
     const limit = parseInt(req.query.limit) || 10;
-
     const result = await getRecentSubmissions(userId, limit);
     res.json(result);
   } catch (error) {
@@ -116,13 +112,11 @@ export async function getRecentSubmissionsController(req, res) {
 
 /**
  * POST /api/subjective/:submissionId/retry
- * Retry evaluation for failed submission
  */
 export async function retryEvaluationController(req, res) {
   try {
     const userId = req.user._id;
     const { submissionId } = req.params;
-
     const result = await retryEvaluation(submissionId, userId);
     res.json(result);
   } catch (error) {

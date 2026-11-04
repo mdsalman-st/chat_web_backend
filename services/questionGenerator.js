@@ -1,6 +1,7 @@
 import Chapter from '../models/Chapter.js';
 import Question from '../models/Question.js';
 import GenerationJob from '../models/GenerationJob.js';
+import OfficialPaper from '../models/OfficialPaper.js'; // 👈 NAYA IMPORT
 import { executeAiJsonWithFailover } from '../utils/aiClient.js';
 import { getResolvedBoardConfig } from '../utils/boardEngine.js';
 
@@ -24,7 +25,6 @@ export async function queueOrGetChapterJob({
   const normMedium = medium.toLowerCase() === 'english' ? 'English' : 'Hindi';
   const jobKey = `${boardCode.toLowerCase()}_${classLevel}_${subjectCode.toLowerCase()}_${chapterNumber}_${normMedium.toLowerCase()}_${isHardMode ? 'hard' : 'normal'}`;
 
-  // Check if job already exists and is active
   let job = await GenerationJob.findOne({ jobKey });
 
   if (job) {
@@ -32,7 +32,6 @@ export async function queueOrGetChapterJob({
       return job;
     }
     if (job.status === 'completed') {
-      // Check if enough verified questions exist in DB
       const existingCount = await Question.countDocuments({
         boardCode: boardCode.toLowerCase(),
         classLevel: String(classLevel),
@@ -48,7 +47,6 @@ export async function queueOrGetChapterJob({
     }
   }
 
-  // Create or reset job
   job = await GenerationJob.findOneAndUpdate(
     { jobKey },
     {
@@ -73,7 +71,6 @@ export async function queueOrGetChapterJob({
     { upsert: true, new: true }
   );
 
-  // Trigger generator asynchronously in background (non-blocking)
   setImmediate(async () => {
     try {
       await runGenerationAndVerification(job);
@@ -98,7 +95,6 @@ export async function queueOrGetChapterJob({
 async function runGenerationAndVerification(job) {
   const { boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount } = job;
 
-  // 1. Fetch chapter & board metadata
   const boardConfig = await getResolvedBoardConfig(boardCode);
   const chapter = await Chapter.findOne({
     classLevel: String(classLevel),
@@ -112,6 +108,43 @@ async function runGenerationAndVerification(job) {
 
   await GenerationJob.findByIdAndUpdate(job._id, {
     $set: {
+      progressPercent: 20,
+      progressMessage: `Fetching Official Board Papers for reference…`, // 👈 Updated Message
+    },
+  });
+
+  // ==========================================
+  // 👇 NAYA LOGIC: DATABASE SE PDF KA TEXT NIKALNA 👇
+  // ==========================================
+  let referenceContext = "";
+  try {
+    const pastPapers = await OfficialPaper.find({
+      boardCode: boardCode.toLowerCase(),
+      classLevel: String(classLevel),
+      subjectCode: subjectCode.toLowerCase(),
+      status: 'ingested',
+      extractedText: { $ne: '' } // Sirf wo papers jinka text extract ho chuka hai
+    }).limit(3).select('extractedText').lean();
+
+    if (pastPapers.length > 0) {
+      let combinedText = pastPapers.map(p => p.extractedText).join('\n\n--- NEXT PAPER ---\n\n');
+      
+      // Token limit se bachne ke liye text ko truncate kar rahe hain (Max ~4000 characters)
+      if (combinedText.length > 4000) {
+        combinedText = combinedText.substring(0, 4000) + '\n...[Text Truncated for Token Limit]...';
+      }
+      referenceContext = combinedText;
+      console.log(`[AI Gen] Found ${pastPapers.length} reference papers for context.`);
+    } else {
+      console.log(`[AI Gen] No reference papers found. Generating from general knowledge.`);
+    }
+  } catch (err) {
+    console.warn(`[AI Gen] Failed to fetch reference papers: ${err.message}`);
+  }
+  // ==========================================
+
+  await GenerationJob.findByIdAndUpdate(job._id, {
+    $set: {
       progressPercent: 25,
       progressMessage: `Analyzing chapter topics for ${chapterTitle}…`,
     },
@@ -121,12 +154,14 @@ async function runGenerationAndVerification(job) {
   const systemInstruction = `You are a senior board exam question creator for ${boardConfig.name}.
 STRICT RULES:
 1. ONLY generate questions directly from the prescribed Class ${classLevel} ${subjectCode} NCERT and state textbook syllabus for Chapter ${chapterNumber} ("${chapterTitle}").
-2. DO NOT use outside knowledge, university-level theories, or out-of-syllabus concepts.
-3. Every question must have 4 clear, plausible options (A, B, C, D) with exactly one undeniably correct answer.
-4. Difficulty mix: ${isHardMode ? '10% Easy, 40% Medium, 50% Hard' : '30% Easy, 50% Medium, 20% Hard'}. Focus on concept application and 2-step reasoning.
-5. Language: Provide content in ${isHindi ? 'Hindi (with English technical terms in brackets if helpful)' : 'English'}.
-6. Output MUST strictly match the requested JSON format.`;
+2. If "REFERENCE MATERIAL" is provided, heavily prioritize the question style, difficulty level, and specific sub-topics asked in those reference papers.
+3. DO NOT use outside knowledge, university-level theories, or out-of-syllabus concepts.
+4. Every question must have 4 clear, plausible options (A, B, C, D) with exactly one undeniably correct answer.
+5. Difficulty mix: ${isHardMode ? '10% Easy, 40% Medium, 50% Hard' : '30% Easy, 50% Medium, 20% Hard'}. Focus on concept application and 2-step reasoning.
+6. Language: Provide content in ${isHindi ? 'Hindi (with English technical terms in brackets if helpful)' : 'English'}.
+7. Output MUST strictly match the requested JSON format.`;
 
+  // 👇 Prompt mein Reference Context add kar diya 👇
   const prompt = `Generate ${targetCount} high-quality board-level practice MCQs for:
 Board: ${boardConfig.name}
 Class: ${classLevel}
@@ -134,6 +169,14 @@ Subject: ${subjectCode}
 Chapter: ${chapterNumber} - ${chapterTitle} (${chapterHindi})
 Language: ${isHindi ? 'Hindi' : 'English'}
 Mode: ${isHardMode ? 'Hard Mode' : 'Standard Board Mode'}
+
+${referenceContext ? `
+### REFERENCE MATERIAL (Previous Year Board Papers from Database):
+"""
+${referenceContext}
+"""
+Use the above reference material as the primary source for question patterns and difficulty.
+` : ''}
 
 Return JSON format:
 {
@@ -182,7 +225,6 @@ Return JSON format:
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
 
-    // Strip answer and explanation before sending to solver
     const solverPrompt = `You are an independent board exam evaluator. Solve the following question without bias.
 Question: ${candidate.questionText}
 Options:
@@ -206,7 +248,6 @@ Return JSON format:
       const expectedKey = String(candidate.correctOption || '').trim().toUpperCase();
 
       if (solvedKey && solvedKey === expectedKey) {
-        // Verification passed! Insert or update question in DB
         await Question.findOneAndUpdate(
           {
             boardCode: boardCode.toLowerCase(),
@@ -245,7 +286,6 @@ Return JSON format:
       console.warn(`[AI Gen] Verification call failed on Q${i + 1}: ${vErr.message}`);
     }
 
-    // Update progress
     const currentProgress = Math.min(95, 55 + Math.round(((i + 1) / candidates.length) * 40));
     await GenerationJob.findByIdAndUpdate(job._id, {
       $set: {

@@ -37,8 +37,23 @@ Return STRICT JSON matching this schema:
   "detectedQuestions": [1, 2]
 }`;
 
+    // 👇 NAYA LOGIC: Agar DB me base64 nahi hai, toh Cloudinary URL se fetch karo
+    let imageBase64Data = page.imageBase64;
+    
+    if (!imageBase64Data && page.imageUrl) {
+      try {
+        console.log(`Fetching image from Cloudinary for OCR...`);
+        const response = await fetch(page.imageUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        imageBase64Data = Buffer.from(arrayBuffer).toString('base64');
+      } catch (fetchErr) {
+        console.error(`Failed to fetch image from Cloudinary: ${fetchErr.message}`);
+        // Agar fetch fail ho jaye toh purana base64 use karne ki koshish karo (agar hai toh)
+      }
+    }
+
     const { result } = await executeGeminiVisionWithFailover({
-      imageBase64: page.imageBase64,
+      imageBase64: imageBase64Data, // Ab AI ko image milegi
       mimeType: page.mimeType || 'image/jpeg',
       prompt,
       systemInstruction: 'You are an accurate OCR system for handwritten examination papers in Hindi and English.',
@@ -301,11 +316,21 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
     year,
     examPhase,
     setCode,
-    pages: pages.map((p, idx) => ({
-      pageNumber: idx + 1,
-      imageBase64: p.imageBase64,
-      mimeType: p.mimeType || 'image/jpeg',
-    })),
+    // 👇 YAHAN UPDATE KIYA HAI: Agar Cloudinary URL aaya hai toh Base64 DB me save mat karo
+    pages: pages.map((p, idx) => {
+      const pageData = {
+        pageNumber: idx + 1,
+        mimeType: p.mimeType || 'image/jpeg',
+        imageUrl: p.imageUrl || '', // URL save karo
+      };
+      
+      // Sirf tab base64 save karo jab URL na ho (backward compatibility ke liye)
+      if (!p.imageUrl && p.imageBase64) {
+        pageData.imageBase64 = p.imageBase64;
+      }
+      
+      return pageData;
+    }),
     totalPages: pages.length,
     status: 'uploading',
     startedAt: new Date(),

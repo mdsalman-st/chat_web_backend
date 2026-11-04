@@ -61,7 +61,10 @@ router.get('/results/recent', protect, getRecentResults);
 
 /* Phase 4: Diagnostic PDF Report, Asynchronous Analysis Queue & Notifications */
 router.get('/:attemptId/pdf-token', protect, getPdfDownloadToken);
-router.get('/:attemptId/pdf', downloadTestReportPdf);
+
+// FIX 1: Added 'protect' middleware so req.user is available in the controller
+router.get('/:attemptId/pdf', protect, downloadTestReportPdf);
+
 router.post('/:attemptId/queue-analysis', protect, queueTestAnalysis);
 router.get('/notifications', protect, getStudentNotifications);
 router.patch('/notifications/:id/read', protect, markNotificationRead);
@@ -75,17 +78,26 @@ router.post('/papers/ingest', protect, ingestPaper);
 router.post('/papers/:paperId/match', protect, matchPaper);
 router.post('/papers/:paperId/mvvi-tags', protect, generateMvviTags);
 
-/* Student: Available Papers & Test Taking */
+
+/* 
+  FIX 2: Route Ordering. 
+  Static routes (available, pending-review, mvvi-analysis) MUST come 
+  before dynamic routes (:paperId) so Express doesn't confuse them.
+*/
+
+/* Student: Available Papers */
 router.get('/papers/available', protect, getAvailablePapersForStudent);
-router.get('/papers/:paperId', protect, getPaperForTestTaking);
-router.post('/papers/:paperId/start', protect, startPaperTest);
-router.get('/papers/:paperId/answers', protect, getPaperAnswers);
 
 /* Admin: Review Queue */
 router.get('/papers/pending-review', protect, getPendingReviewPapers);
-router.post('/papers/:paperId/review-match', protect, reviewPaperMatch);
 
 /* MVVI/VVI Analysis */
 router.get('/papers/mvvi-analysis', protect, getMvviAnalysis);
+
+/* Dynamic Paper ID Routes (Must be below static routes) */
+router.get('/papers/:paperId', protect, getPaperForTestTaking);
+router.post('/papers/:paperId/start', protect, startPaperTest);
+router.get('/papers/:paperId/answers', protect, getPaperAnswers);
+router.post('/papers/:paperId/review-match', protect, reviewPaperMatch);
 
 export default router;

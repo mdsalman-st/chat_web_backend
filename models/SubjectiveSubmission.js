@@ -1,16 +1,13 @@
 import mongoose from 'mongoose';
 
-/**
- * SubjectiveSubmission Schema
- * Phase 6: Multi-page handwritten answer sheet upload and AI handwriting evaluation.
- */
 const pageEntrySchema = new mongoose.Schema(
   {
     pageNumber: { type: Number, required: true },
-    imageBase64: { type: String, required: true },
+    imageUrl: { type: String, required: true }, // 👈 NAYA: Cloudinary ka URL yahan save hoga
+    imageBase64: { type: String }, // 👈 Purana field, par ab compulsory nahi hai
     mimeType: { type: String, default: 'image/jpeg' },
     ocrText: { type: String, default: '' },
-    ocrConfidence: { type: Number, default: 0 }, // 0 to 100
+    ocrConfidence: { type: Number, default: 0 },
     processingStatus: {
       type: String,
       enum: ['pending', 'processing', 'completed', 'failed'],
@@ -60,34 +57,12 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    boardCode: {
-      type: String,
-      required: true,
-      lowercase: true,
-      trim: true,
-      index: true,
-    },
-    classLevel: {
-      type: String,
-      required: true,
-      trim: true,
-      index: true,
-    },
-    subjectCode: {
-      type: String,
-      required: true,
-      lowercase: true,
-      trim: true,
-      index: true,
-    },
+    boardCode: { type: String, required: true, lowercase: true, trim: true, index: true },
+    classLevel: { type: String, required: true, trim: true, index: true },
+    subjectCode: { type: String, required: true, lowercase: true, trim: true, index: true },
     subjectName: { type: String, default: '' },
-    medium: {
-      type: String,
-      enum: ['Hindi', 'English'],
-      default: 'Hindi',
-    },
+    medium: { type: String, enum: ['Hindi', 'English'], default: 'Hindi' },
 
-    // Reference to official paper if evaluating against PYQ
     paperId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'OfficialPaper',
@@ -99,17 +74,11 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
     examPhase: { type: String, default: null },
     setCode: { type: String, default: null },
 
-    // Uploaded pages
     pages: [pageEntrySchema],
     totalPages: { type: Number, default: 0 },
-
-    // Extracted combined transcription
     combinedTranscript: { type: String, default: '' },
-
-    // Evaluation results
     evaluations: [questionEvaluationSchema],
 
-    // Score & Summary
     totalMarks: { type: Number, default: 0 },
     obtainedMarks: { type: Number, default: 0 },
     percentage: { type: Number, default: 0 },
@@ -117,7 +86,6 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
     strengths: [{ type: String }],
     areasOfImprovement: [{ type: String }],
 
-    // Status tracking
     status: {
       type: String,
       enum: ['uploading', 'ocr_processing', 'evaluating', 'completed', 'failed'],
@@ -130,14 +98,11 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
     completedAt: { type: Date, default: null },
     durationMs: { type: Number, default: 0 },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 subjectiveSubmissionSchema.index({ userId: 1, status: 1, createdAt: -1 });
 subjectiveSubmissionSchema.index({ boardCode: 1, classLevel: 1, subjectCode: 1 });
 
 const SubjectiveSubmission = mongoose.model('SubjectiveSubmission', subjectiveSubmissionSchema);
-
 export default SubjectiveSubmission;

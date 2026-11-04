@@ -78,6 +78,30 @@ const officialPaperSchema = new mongoose.Schema(
     sourceCreditText: { type: String, default: '' },
     officialKeyUrl: { type: String, default: '' },
 
+    // ==========================================
+    // NEW FIELDS FOR PDF UPLOAD & AI EXTRACTION
+    // ==========================================
+    fileUrl: { 
+      type: String, 
+      default: '' 
+    },
+    originalName: { 
+      type: String, 
+      default: '' 
+    },
+    fileSize: { 
+      type: Number 
+    },
+    mimeType: { 
+      type: String 
+    },
+    // AI isko use karega test generate karne ke liye
+    extractedText: { 
+      type: String, 
+      default: '' 
+    },
+    // ==========================================
+
     // Ingestion Status
     status: {
       type: String,

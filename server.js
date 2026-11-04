@@ -16,6 +16,10 @@ import subjectiveRoute from './routes/subjective.js';
 import paperRoute from './routes/paper.js';
 import adminRoute from './routes/admin.js'; 
 
+// 👇 YAHAN NAYE ROUTES IMPORT KIYE HAIN 👇
+import adminPaperRoutes from './routes/adminPaperRoutes.js';
+import superAdminPaperRoutes from './routes/superAdminPaperRoutes.js';
+
 dotenv.config();
 
 const app = express();
@@ -113,6 +117,12 @@ app.use('/api/notes', noteRoute);
 app.use('/api/tests', testRoute);
 app.use('/api/subjective', subjectiveRoute);
 
+// 👇 YAHAN NAYE ROUTES ADD KIYE HAIN 👇
+app.use('/api/admin/papers', adminPaperRoutes);
+app.use('/api/superadmin/papers', superAdminPaperRoutes);
+// 👆 YAHAN TAK 👆
+
+// Purane routes waise hi hain
 app.use('/api/admin', paperRoute);
 app.use('/api/admin', adminRoute); 
 app.use('/api/student', paperRoute);
