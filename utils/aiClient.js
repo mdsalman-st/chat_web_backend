@@ -10,6 +10,7 @@ dotenv.config();
 // ✅ Sahi aur Naye Models
 const GEMINI_MODEL = 'gemini-3.8-flash'; 
 const GROQ_MODEL = 'openai/gpt-oss-120b'; 
+const providerCooldowns = new Map();
 
 function getTodayString() {
   return new Date().toISOString().slice(0, 10);
@@ -103,6 +104,15 @@ async function callGroq(apiKey, prompt, systemInstruction) {
 
   if (res.status === 429) {
     await recordKeyUsage('groq', true, true);
+    const retryAfter = res.headers.get('retry-after');
+    const retryAfterSeconds = Number(retryAfter);
+    const retryAt = retryAfter ? Date.parse(retryAfter) : NaN;
+    const cooldownMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? retryAfterSeconds * 1000
+      : Number.isFinite(retryAt) && retryAt > Date.now()
+        ? retryAt - Date.now()
+        : 60000;
+    providerCooldowns.set('groq', Date.now() + cooldownMs);
     throw new Error('Groq Rate Limit (429)');
   }
 
@@ -175,8 +185,10 @@ export async function executeAiJsonWithFailover({ prompt, systemInstruction = ''
   const gemini3 = process.env.GEMINI_KEY_3;
   const groq = process.env.GROQ_KEY;
 
-  // ✅ Groq ko Primary rakha (fast aur reliable)
-  if (groq) providers.push({ name: 'groq', fn: () => callGroq(groq, prompt, systemInstruction) });
+  // Skip providers that recently returned 429 so each batch doesn't hit the same limit.
+  if (groq && (providerCooldowns.get('groq') || 0) <= Date.now()) {
+    providers.push({ name: 'groq', fn: () => callGroq(groq, prompt, systemInstruction) });
+  }
   
   // Agar Groq fail ho, tab Gemini try karo
   if (gemini1) providers.push({ name: 'gemini_1', fn: () => callGemini(gemini1, 'gemini_1', prompt, systemInstruction) });

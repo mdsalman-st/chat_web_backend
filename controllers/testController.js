@@ -265,24 +265,18 @@ export async function prepareChapterQuestions(req, res) {
     if (!subjectCode || !chapterNumber) return res.status(400).json({ error: 'subjectCode and chapterNumber are required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    const config = await getResolvedBoardConfig(boardCode);
-    const boardPattern = config.paperPattern || { mcq: 50, twoMarks: 20, fiveMarks: 10 }; 
-    
-    const mcqCount = boardPattern.mcq || 0;
-    const twoMarks = boardPattern.twoMarks || 0;
-    const fiveMarks = boardPattern.fiveMarks || 0;
-    const targetCount = Number(req.body.targetCount) || (mcqCount + twoMarks + fiveMarks) || 20;
+    const targetCount = Number(req.body.targetCount) || 10;
 
     const existingCount = await Question.countDocuments({
       boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
-      subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, isActive: true, status: 'verified',
+      subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, type: 'mcq', isActive: true, status: 'verified',
     });
 
     // 🚨 MAGIC: Sirf 4 questions ready hone par hi test start karo!
     const minStartCount = 4; 
 
     const job = await queueOrGetChapterJob({
-      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount, pattern: boardPattern
+      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount
     });
 
     if (existingCount >= minStartCount) {
