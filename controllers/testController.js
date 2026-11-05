@@ -34,7 +34,7 @@ import {
 import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
 /**
- * Test Controller — Optimized & Secured
+ * Test Controller — Final Optimized & Secured (Fast Start)
  */
 
 /* --------------------------------------------------------------------------
@@ -250,7 +250,7 @@ export async function updateStudentProfile(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   POST /api/tests/chapters/prepare (🚨 UPDATED: FAST START LOGIC)
+   POST /api/tests/chapters/prepare (FAST START LOGIC)
    -------------------------------------------------------------------------- */
 export async function prepareChapterQuestions(req, res) {
   try {
@@ -278,10 +278,9 @@ export async function prepareChapterQuestions(req, res) {
       subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, isActive: true, status: 'verified',
     });
 
-    // 🚨 MAGIC LOGIC: Agar kam se kam 5 questions ready hain, toh test turant start karwao!
-    const minStartCount = 5; 
+    // 🚨 MAGIC: Sirf 4 questions ready hone par hi test start karo!
+    const minStartCount = 4; 
 
-    // Background mein AI ko trigger karo (agar pehle se nahi chal raha)
     const job = await queueOrGetChapterJob({
       boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount, pattern: boardPattern
     });
@@ -290,7 +289,7 @@ export async function prepareChapterQuestions(req, res) {
       return res.json({ 
         success: true, 
         ready: true, 
-        isGenerating: job.status === 'running', // Peeche AI abhi bhi kaam kar raha hai
+        isGenerating: job.status === 'running', 
         count: existingCount, 
         message: `Test is ready! Generating more in background.` 
       });
@@ -404,7 +403,7 @@ export async function flagQuestion(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   POST /api/tests/start (OPTIMIZED)
+   POST /api/tests/start (AUTO-UPDATE LOGIC)
    -------------------------------------------------------------------------- */
 export async function startTest(req, res) {
   try {
@@ -418,6 +417,7 @@ export async function startTest(req, res) {
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode is required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
+    // 🚨 1. RESUME LOGIC + AUTO-UPDATE 🚨
     let attempt = await TestAttempt.findOne({
       userId: req.user._id, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
       subjectCode: subjectCode.toLowerCase(), chapterNumber: chapterNumber ? Number(chapterNumber) : null,
@@ -425,9 +425,24 @@ export async function startTest(req, res) {
     });
 
     if (attempt) {
-      const questions = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
-      const mcqQuestions = questions.filter(q => q.type !== 'subjective');
-      const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
+      // Background mein naye questions aaye honge, unhe fetch karo
+      const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), medium, isActive: true, status: 'verified' };
+      if (chapterNumber) query.chapterNumber = Number(chapterNumber);
+      
+      let freshQuestions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).lean();
+      
+      // Agar naye questions mile hain, toh attempt ko update karo
+      if (freshQuestions.length > attempt.questionIds.length) {
+        attempt.questionIds = freshQuestions.map(q => q._id);
+        attempt.totalQuestions = freshQuestions.filter(q => q.type !== 'subjective').length;
+        await attempt.save();
+      } else {
+        // Warna purane wale hi utha lo
+        freshQuestions = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
+      }
+
+      const mcqQuestions = freshQuestions.filter(q => q.type !== 'subjective');
+      const subjectiveQuestions = freshQuestions.filter(q => q.type === 'subjective');
 
       return res.json({
         success: true, attemptId: attempt._id, testType: attempt.testType, 
@@ -439,6 +454,7 @@ export async function startTest(req, res) {
       });
     }
 
+    // 🚨 2. NAYA TEST LOGIC 🚨
     const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), medium, isActive: true, status: 'verified' };
     if (chapterNumber) query.chapterNumber = Number(chapterNumber);
 
@@ -448,6 +464,7 @@ export async function startTest(req, res) {
     }
     if (questions.length === 0) return res.status(404).json({ error: 'No questions available.' });
 
+    // Shuffle
     for (let i = questions.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [questions[i], questions[j]] = [questions[j], questions[i]];
