@@ -34,11 +34,11 @@ import {
 import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
 /**
- * Test Controller — Handles Board Configs, Dynamic Syllabi, and Student Academic Profiles
+ * Test Controller — Optimized & Secured
  */
 
 /* --------------------------------------------------------------------------
-   GET /api/tests/boards — List all active boards
+   GET /api/tests/boards
    -------------------------------------------------------------------------- */
 export async function getBoards(req, res) {
   try {
@@ -49,26 +49,14 @@ export async function getBoards(req, res) {
 
     const result = [
       ...boards.map((b) => ({
-        code: b.code,
-        name: b.name,
-        shortName: b.shortName,
-        hindiName: b.hindiName,
-        state: b.state,
-        supportedMediums: b.supportedMediums,
-        hasSetCode: b.hasSetCode,
-        isFallback: b.isFallback,
-        isOther: false,
+        code: b.code, name: b.name, shortName: b.shortName, hindiName: b.hindiName,
+        state: b.state, supportedMediums: b.supportedMediums, hasSetCode: b.hasSetCode,
+        isFallback: b.isFallback, isOther: false,
       })),
       {
-        code: 'other',
-        name: 'Other Board / University (अन्य बोर्ड)',
-        shortName: 'Other',
-        hindiName: 'अन्य बोर्ड',
-        state: 'Other',
-        supportedMediums: ['Hindi', 'English'],
-        hasSetCode: false,
-        isFallback: false,
-        isOther: true,
+        code: 'other', name: 'Other Board / University (अन्य बोर्ड)', shortName: 'Other',
+        hindiName: 'अन्य बोर्ड', state: 'Other', supportedMediums: ['Hindi', 'English'],
+        hasSetCode: false, isFallback: false, isOther: true,
       },
     ];
 
@@ -80,7 +68,7 @@ export async function getBoards(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   GET /api/tests/boards/:boardCode — Get full config for a board (with fallback)
+   GET /api/tests/boards/:boardCode
    -------------------------------------------------------------------------- */
 export async function getBoardConfig(req, res) {
   try {
@@ -90,19 +78,11 @@ export async function getBoardConfig(req, res) {
     res.json({
       success: true,
       board: {
-        code: config.code,
-        name: config.name,
-        shortName: config.shortName,
-        hindiName: config.hindiName,
-        state: config.state,
-        supportedMediums: config.supportedMediums,
-        hasSetCode: config.hasSetCode,
-        setCodes: config.setCodes || [],
-        sourceCreditText: config.sourceCreditText,
-        examPhases: config.examPhases || [],
-        paperPattern: config.paperPattern || {},
-        classes: getAvailableClasses(config),
-        isUsingFallback: config.isUsingFallback,
+        code: config.code, name: config.name, shortName: config.shortName, hindiName: config.hindiName,
+        state: config.state, supportedMediums: config.supportedMediums, hasSetCode: config.hasSetCode,
+        setCodes: config.setCodes || [], sourceCreditText: config.sourceCreditText,
+        examPhases: config.examPhases || [], paperPattern: config.paperPattern || {},
+        classes: getAvailableClasses(config), isUsingFallback: config.isUsingFallback,
         fallbackNotice: config.fallbackNotice,
       },
     });
@@ -126,15 +106,9 @@ export async function getSubjects(req, res) {
     const streams = getStreamsForClass(config, classLevel);
 
     res.json({
-      success: true,
-      boardCode: config.code,
-      boardName: config.shortName,
-      classLevel,
-      streamId,
-      availableStreams: streams,
-      subjects,
-      isUsingFallback: config.isUsingFallback,
-      fallbackNotice: config.fallbackNotice,
+      success: true, boardCode: config.code, boardName: config.shortName,
+      classLevel, streamId, availableStreams: streams, subjects,
+      isUsingFallback: config.isUsingFallback, fallbackNotice: config.fallbackNotice,
     });
   } catch (err) {
     console.error('getSubjects error:', err);
@@ -143,7 +117,7 @@ export async function getSubjects(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   GET /api/tests/boards/:boardCode/chapters — STRICT OFFICIAL DATA ONLY
+   GET /api/tests/boards/:boardCode/chapters
    -------------------------------------------------------------------------- */
 export async function getChapters(req, res) {
   try {
@@ -154,42 +128,21 @@ export async function getChapters(req, res) {
     const phase = req.query.phase || null;
     const medium = normalizeMedium(req.query.medium || req.user?.studentProfile?.medium || 'Hindi');
 
-    if (!subjectCode) {
-      return res.status(400).json({ error: 'subject query parameter is required' });
-    }
-    if (!medium) {
-      return res.status(400).json({ error: 'Unsupported medium' });
-    }
+    if (!subjectCode) return res.status(400).json({ error: 'subject query parameter is required' });
+    if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     let { chapters, usedFallbackChapters } = await getChaptersForSubject({
-      boardCode,
-      classLevel,
-      subjectCode,
-      stream,
-      phase,
-      medium,
+      boardCode, classLevel, subjectCode, stream, phase, medium,
     });
 
-    if (!chapters) {
-      chapters = [];
-    }
+    if (!chapters) chapters = [];
 
     res.json({
-      success: true,
-      count: chapters.length,
-      boardCode,
-      classLevel,
-      subjectCode,
-      medium,
-      usedFallbackChapters,
+      success: true, count: chapters.length, boardCode, classLevel, subjectCode, medium, usedFallbackChapters,
       chapters: chapters.map((c) => ({
-        id: c._id,
-        chapterNumber: c.chapterNumber,
-        title: chapterTitleForMedium(c, medium),
-        hindiTitle: c.hindiTitle || '',
-        phaseCutoff: c.phaseCutoff,
-        questionCount: c.questionCount || 0,
-        verifiedQuestionCount: c.verifiedQuestionCount || 0,
+        id: c._id, chapterNumber: c.chapterNumber, title: chapterTitleForMedium(c, medium),
+        hindiTitle: c.hindiTitle || '', phaseCutoff: c.phaseCutoff,
+        questionCount: c.questionCount || 0, verifiedQuestionCount: c.verifiedQuestionCount || 0,
         isLive: (c.questionCount > 0) || c.isLive,
         statusLabel: (c.questionCount > 0 || c.isLive) ? 'Live' : 'Coming soon',
       })),
@@ -216,19 +169,12 @@ export async function getStudentProfile(req, res) {
     res.json({
       success: true,
       profile: {
-        board: profile.board || 'ncert_default',
-        boardName: profile.boardName || 'NCERT Default',
-        isOtherBoard: !!profile.isOtherBoard,
-        otherBoardName: profile.otherBoardName || '',
-        classLevel: profile.classLevel || '10',
-        stream: profile.stream || null,
-        streamName: profile.streamName || null,
-        medium: profile.medium || 'Hindi',
-        selectedSubjects: profile.selectedSubjects || [],
-        academicYear: profile.academicYear || '2025-2026',
-        targetGoal: profile.targetGoal || '',
-        isProfileComplete: !!profile.isProfileComplete,
-        formattedBadge,
+        board: profile.board || 'ncert_default', boardName: profile.boardName || 'NCERT Default',
+        isOtherBoard: !!profile.isOtherBoard, otherBoardName: profile.otherBoardName || '',
+        classLevel: profile.classLevel || '10', stream: profile.stream || null,
+        streamName: profile.streamName || null, medium: profile.medium || 'Hindi',
+        selectedSubjects: profile.selectedSubjects || [], academicYear: profile.academicYear || '2025-2026',
+        targetGoal: profile.targetGoal || '', isProfileComplete: !!profile.isProfileComplete, formattedBadge,
       },
     });
   } catch (err) {
@@ -242,9 +188,7 @@ export async function getStudentProfile(req, res) {
    -------------------------------------------------------------------------- */
 export async function updateStudentProfile(req, res) {
   try {
-    const {
-      board, otherBoardName, classLevel, stream, streamName, medium, selectedSubjects, targetGoal,
-    } = req.body;
+    const { board, otherBoardName, classLevel, stream, streamName, medium, selectedSubjects, targetGoal } = req.body;
 
     if (!board) return res.status(400).json({ error: 'Board selection is required' });
     if (!classLevel) return res.status(400).json({ error: 'Class level is required' });
@@ -255,48 +199,33 @@ export async function updateStudentProfile(req, res) {
     let resolvedBoardName = 'NCERT Default';
 
     if (isOtherBoard) {
-      if (!otherBoardName || !otherBoardName.trim()) {
-        return res.status(400).json({ error: 'Please enter your Board / University name' });
-      }
+      if (!otherBoardName || !otherBoardName.trim()) return res.status(400).json({ error: 'Please enter your Board / University name' });
       resolvedBoardName = otherBoardName.trim();
 
       await DemandBoard.findOneAndUpdate(
         { normalizedName: resolvedBoardName.toLowerCase() },
         {
-          $setOnInsert: { name: resolvedBoardName },
-          $inc: { requestedCount: 1 },
+          $setOnInsert: { name: resolvedBoardName }, $inc: { requestedCount: 1 },
           $set: { lastRequestedAt: new Date() },
-          $push: {
-            students: { userId: req.user._id, email: req.user.email, classLevel, requestedAt: new Date() },
-          },
+          $push: { students: { userId: req.user._id, email: req.user.email, classLevel, requestedAt: new Date() } },
         },
         { upsert: true, new: true }
       );
     } else {
       const bConfig = await BoardConfig.findOne({ code: board.toLowerCase() }).lean();
-      if (bConfig) {
-        resolvedBoardName = bConfig.shortName || bConfig.name;
-      }
+      if (bConfig) resolvedBoardName = bConfig.shortName || bConfig.name;
     }
 
     const updatedProfile = {
-      board: isOtherBoard ? 'other' : board.toLowerCase().trim(),
-      boardName: resolvedBoardName,
-      isOtherBoard,
-      otherBoardName: isOtherBoard ? resolvedBoardName : '',
+      board: isOtherBoard ? 'other' : board.toLowerCase().trim(), boardName: resolvedBoardName,
+      isOtherBoard, otherBoardName: isOtherBoard ? resolvedBoardName : '',
       classLevel: String(classLevel).replace(/[^0-9]/g, '') || String(classLevel),
-      stream: stream || null,
-      streamName: streamName || null,
-      medium: normalizedMedium,
+      stream: stream || null, streamName: streamName || null, medium: normalizedMedium,
       selectedSubjects: Array.isArray(selectedSubjects) ? selectedSubjects : [],
-      academicYear: req.body.academicYear || '2025-2026',
-      targetGoal: targetGoal || '',
-      isProfileComplete: true,
+      academicYear: req.body.academicYear || '2025-2026', targetGoal: targetGoal || '', isProfileComplete: true,
     };
 
-    const classLabel = `Class ${updatedProfile.classLevel}`;
-    const formattedBadge = `${classLabel} • ${updatedProfile.boardName} • ${updatedProfile.medium}`;
-    updatedProfile.formattedBadge = formattedBadge;
+    updatedProfile.formattedBadge = `Class ${updatedProfile.classLevel} • ${updatedProfile.boardName} • ${updatedProfile.medium}`;
 
     const user = await User.findByIdAndUpdate(
       req.user._id,
@@ -313,12 +242,7 @@ export async function updateStudentProfile(req, res) {
       { new: true }
     );
 
-    res.json({
-      success: true,
-      message: 'Student academic profile updated successfully',
-      profile: updatedProfile,
-      user: user.toJSON(),
-    });
+    res.json({ success: true, message: 'Student academic profile updated successfully', profile: updatedProfile, user: user.toJSON() });
   } catch (err) {
     console.error('updateStudentProfile error:', err);
     res.status(500).json({ error: 'Failed to update academic profile' });
@@ -326,12 +250,11 @@ export async function updateStudentProfile(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   POST /api/tests/chapters/prepare
+   POST /api/tests/chapters/prepare (🚨 UPDATED: FAST START LOGIC)
    -------------------------------------------------------------------------- */
 export async function prepareChapterQuestions(req, res) {
   try {
     const studentProf = req.user?.studentProfile || {};
-
     const boardCode = req.body.boardCode || studentProf.board || 'bseb';
     const classLevel = req.body.classLevel || studentProf.classLevel || '10';
     const subjectCode = req.body.subjectCode;
@@ -339,9 +262,7 @@ export async function prepareChapterQuestions(req, res) {
     const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
     const isHardMode = !!req.body.isHardMode;
 
-    if (!subjectCode || !chapterNumber) {
-      return res.status(400).json({ error: 'subjectCode and chapterNumber are required' });
-    }
+    if (!subjectCode || !chapterNumber) return res.status(400).json({ error: 'subjectCode and chapterNumber are required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const config = await getResolvedBoardConfig(boardCode);
@@ -353,41 +274,32 @@ export async function prepareChapterQuestions(req, res) {
     const targetCount = Number(req.body.targetCount) || (mcqCount + twoMarks + fiveMarks) || 20;
 
     const existingCount = await Question.countDocuments({
-      boardCode: boardCode.toLowerCase(),
-      classLevel: String(classLevel),
-      subjectCode: subjectCode.toLowerCase(),
-      chapterNumber,
-      medium,
-      isActive: true,
-      status: 'verified',
+      boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
+      subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, isActive: true, status: 'verified',
     });
 
-    if (existingCount >= targetCount) {
-      return res.json({
-        success: true,
-        ready: true,
-        isGenerating: false,
-        count: existingCount,
-        message: `Chapter questions are ready (${existingCount} verified questions as per Board Pattern).`,
+    // 🚨 MAGIC LOGIC: Agar kam se kam 5 questions ready hain, toh test turant start karwao!
+    const minStartCount = 5; 
+
+    // Background mein AI ko trigger karo (agar pehle se nahi chal raha)
+    const job = await queueOrGetChapterJob({
+      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount, pattern: boardPattern
+    });
+
+    if (existingCount >= minStartCount) {
+      return res.json({ 
+        success: true, 
+        ready: true, 
+        isGenerating: job.status === 'running', // Peeche AI abhi bhi kaam kar raha hai
+        count: existingCount, 
+        message: `Test is ready! Generating more in background.` 
       });
     }
 
-    const job = await queueOrGetChapterJob({
-      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, 
-      targetCount,
-      pattern: boardPattern
-    });
-
     res.json({
-      success: true,
-      ready: job.status === 'completed',
-      isGenerating: job.status === 'running' || job.status === 'queued',
-      jobId: job._id,
-      jobKey: job.jobKey,
-      status: job.status,
-      progressPercent: job.progressPercent,
-      progressMessage: job.progressMessage,
-      availableCount: existingCount,
+      success: true, ready: false, isGenerating: true,
+      jobId: job._id, jobKey: job.jobKey, status: job.status, progressPercent: job.progressPercent,
+      progressMessage: `Generating first questions... (${existingCount}/${minStartCount})`, availableCount: existingCount,
     });
   } catch (err) {
     console.error('prepareChapterQuestions error:', err);
@@ -402,12 +314,10 @@ export async function getGenerationJobStatus(req, res) {
   try {
     const { jobId } = req.params;
     const job = await GenerationJob.findById(jobId).lean();
-
     if (!job) return res.status(404).json({ error: 'Generation job not found' });
 
     res.json({
-      success: true,
-      job: {
+      success: true, job: {
         id: job._id, status: job.status, progressPercent: job.progressPercent,
         progressMessage: job.progressMessage, verifiedCount: job.verifiedCount,
         targetCount: job.targetCount, error: job.error, completedAt: job.completedAt,
@@ -432,30 +342,21 @@ export async function getChapterPracticeQuestions(req, res) {
     const medium = normalizeMedium(req.query.medium || studentProf.medium || 'Hindi');
     const limit = Math.min(50, Number(req.query.limit) || 15);
 
-    if (!subjectCode || isNaN(chapterNumber)) {
-      return res.status(400).json({ error: 'subjectCode query and valid chapterNumber param required' });
-    }
+    if (!subjectCode || isNaN(chapterNumber)) return res.status(400).json({ error: 'subjectCode query and valid chapterNumber param required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    const query = {
-      classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(),
-      chapterNumber, medium, isActive: true, status: 'verified',
-    };
+    const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, isActive: true, status: 'verified' };
 
-    let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query })
-      .select('-correctOption -explanation').limit(limit).lean();
+    let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).select('-correctOption -explanation').limit(limit).lean();
 
     let usedFallback = false;
     if (questions.length === 0 && boardCode.toLowerCase() !== 'ncert_default') {
-      questions = await Question.find({ boardCode: 'ncert_default', ...query })
-        .select('-correctOption -explanation').limit(limit).lean();
+      questions = await Question.find({ boardCode: 'ncert_default', ...query }).select('-correctOption -explanation').limit(limit).lean();
       if (questions.length > 0) usedFallback = true;
     }
 
     let notice = null;
-    if (questions.length > 0 && questions.length < 5) {
-      notice = `This chapter currently has ${questions.length} questions. More are being prepared.`;
-    }
+    if (questions.length > 0 && questions.length < 5) notice = `This chapter currently has ${questions.length} questions.`;
 
     res.json({
       success: true, count: questions.length, chapterNumber, subjectCode, medium, usedFallback, notice,
@@ -489,19 +390,13 @@ export async function flagQuestion(req, res) {
     );
 
     question.flagCount = (question.flagCount || 0) + 1;
-    const threshold = question.flagThreshold || 3;
-    if (question.flagCount >= threshold) {
+    if (question.flagCount >= (question.flagThreshold || 3)) {
       question.isActive = false;
       question.status = 'flagged';
-      console.warn(`⚠️ Question ${questionId} auto-disabled due to ${question.flagCount} flags.`);
     }
 
     await question.save();
-
-    res.json({
-      success: true, message: 'Thank you for reporting. Question has been flagged for faculty review.',
-      flagCount: question.flagCount, isDisabled: !question.isActive,
-    });
+    res.json({ success: true, message: 'Question flagged.', flagCount: question.flagCount, isDisabled: !question.isActive });
   } catch (err) {
     console.error('flagQuestion error:', err);
     res.status(500).json({ error: 'Failed to report question' });
@@ -509,7 +404,7 @@ export async function flagQuestion(req, res) {
 }
 
 /* --------------------------------------------------------------------------
-   POST /api/tests/start
+   POST /api/tests/start (OPTIMIZED)
    -------------------------------------------------------------------------- */
 export async function startTest(req, res) {
   try {
@@ -523,60 +418,35 @@ export async function startTest(req, res) {
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode is required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    // 🚨 RESUME LOGIC: Check if there is an ongoing attempt 🚨
     let attempt = await TestAttempt.findOne({
-      userId: req.user._id,
-      boardCode: boardCode.toLowerCase(),
-      classLevel: String(classLevel),
-      subjectCode: subjectCode.toLowerCase(),
-      chapterNumber: chapterNumber ? Number(chapterNumber) : null,
-      medium,
-      status: 'in_progress'
+      userId: req.user._id, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
+      subjectCode: subjectCode.toLowerCase(), chapterNumber: chapterNumber ? Number(chapterNumber) : null,
+      medium, status: 'in_progress'
     });
 
     if (attempt) {
-      const questions = await Question.find({ _id: { $in: attempt.questionIds } }).select('+correctOption +explanation').lean();
+      const questions = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
       const mcqQuestions = questions.filter(q => q.type !== 'subjective');
       const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
 
-      const safeMcqs = mcqQuestions.map((q, idx) => ({
-        index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
-        options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber,
-      }));
-
-      const safeSubjectives = subjectiveQuestions.map((q) => ({
-        id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
-        difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber,
-      }));
-
       return res.json({
-        success: true, attemptId: attempt._id, testType: attempt.testType, subjectName: attempt.subjectName, chapterTitle: attempt.chapterTitle,
+        success: true, attemptId: attempt._id, testType: attempt.testType, 
+        subjectName: attempt.subjectName, chapterTitle: attempt.chapterTitle,
         totalQuestions: mcqQuestions.length, medium: attempt.medium, 
-        questions: safeMcqs,
-        subjectiveQuestions: safeSubjectives,
-        answers: attempt.answers // 👈 Purane answers wapas bhej rahe hain
+        questions: mcqQuestions.map((q, idx) => ({ index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber })),
+        subjectiveQuestions: subjectiveQuestions.map((q) => ({ id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber })),
+        answers: attempt.answers || []
       });
     }
 
-    // Normal Flow (Naya test banayenge)
-    const query = {
-      classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(),
-      medium, isActive: true, status: 'verified',
-    };
-
+    const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), medium, isActive: true, status: 'verified' };
     if (chapterNumber) query.chapterNumber = Number(chapterNumber);
 
-    let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query })
-      .select('+correctOption +explanation').lean();
-
+    let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).lean();
     if (questions.length === 0 && boardCode.toLowerCase() !== 'ncert_default') {
-      questions = await Question.find({ boardCode: 'ncert_default', ...query })
-        .select('+correctOption +explanation').lean();
+      questions = await Question.find({ boardCode: 'ncert_default', ...query }).lean();
     }
-
-    if (questions.length === 0) {
-      return res.status(404).json({ error: 'No questions available for this selection. Please try generating questions first.' });
-    }
+    if (questions.length === 0) return res.status(404).json({ error: 'No questions available.' });
 
     for (let i = questions.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -591,56 +461,35 @@ export async function startTest(req, res) {
          finalLimit = (pattern.mcq || 0) + (pattern.twoMarks || 0) + (pattern.fiveMarks || 0);
        } catch (e) { /* ignore */ }
     }
-    
-    const limit = Math.min(finalLimit || 20, questions.length);
-    questions = questions.slice(0, limit);
+    questions = questions.slice(0, Math.min(finalLimit || 20, questions.length));
 
     const mcqQuestions = questions.filter(q => q.type !== 'subjective');
     const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
 
     let subjectName = subjectCode;
+    let chapterTitle = chapterNumber ? `Chapter ${chapterNumber}` : 'Full Paper';
     try {
       const config = await getResolvedBoardConfig(boardCode);
-      const subjects = getSubjectsForClass(config, classLevel, studentProf.stream);
-      const found = subjects.find((s) => s.code === subjectCode);
+      const found = getSubjectsForClass(config, classLevel, studentProf.stream).find(s => s.code === subjectCode);
       if (found) subjectName = found.name;
+      if (chapterNumber) {
+        const chapter = await getChapterForMedium({ boardCode, classLevel, subjectCode, chapterNumber, stream: studentProf.stream, medium });
+        if (chapter) chapterTitle = chapterTitleForMedium(chapter, medium) || chapterTitle;
+      }
     } catch (e) { /* ignore */ }
-
-    let chapterTitle = chapterNumber ? `Chapter ${chapterNumber}` : 'Full Paper';
-    if (chapterNumber) {
-      const chapter = await getChapterForMedium({
-        boardCode,
-        classLevel,
-        subjectCode,
-        chapterNumber,
-        stream: studentProf.stream,
-        medium,
-      });
-      if (chapter) chapterTitle = chapterTitleForMedium(chapter, medium) || chapterTitle;
-    }
 
     attempt = await TestAttempt.create({
       userId: req.user._id, testType, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
       subjectCode: subjectCode.toLowerCase(), subjectName, chapterNumber: chapterNumber ? Number(chapterNumber) : null,
-      chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: mcqQuestions.length,
+      chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: mcqQuestions.length, 
       status: 'in_progress', startedAt: new Date(), isHardMode: !!isHardMode,
     });
-
-    const safeMcqs = mcqQuestions.map((q, idx) => ({
-      index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
-      options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber,
-    }));
-
-    const safeSubjectives = subjectiveQuestions.map((q) => ({
-      id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
-      difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber,
-    }));
 
     res.json({
       success: true, attemptId: attempt._id, testType, subjectName, chapterTitle,
       totalQuestions: mcqQuestions.length, medium, 
-      questions: safeMcqs,
-      subjectiveQuestions: safeSubjectives,
+      questions: mcqQuestions.map((q, idx) => ({ index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber })),
+      subjectiveQuestions: subjectiveQuestions.map((q) => ({ id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber })),
       answers: []
     });
   } catch (err) {
@@ -660,8 +509,8 @@ export async function submitAnswer(req, res) {
     if (!questionId || !selectedOption) return res.status(400).json({ error: 'questionId and selectedOption are required' });
 
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id, status: 'in_progress' });
-    if (!attempt) return res.status(404).json({ error: 'Test attempt not found or already completed' });
-    if (!attempt.questionIds.some((qid) => qid.toString() === questionId)) return res.status(400).json({ error: 'Question does not belong to this test attempt' });
+    if (!attempt) return res.status(404).json({ error: 'Test attempt not found' });
+    if (!attempt.questionIds.some((qid) => qid.toString() === questionId)) return res.status(400).json({ error: 'Invalid question' });
 
     const question = await Question.findById(questionId).select('+correctOption').lean();
     if (!question) return res.status(404).json({ error: 'Question not found' });
@@ -700,7 +549,6 @@ export async function finishTest(req, res) {
     const { subjectiveSubmissionId } = req.body;
 
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id });
-
     if (!attempt) return res.status(404).json({ error: 'Test attempt not found' });
     if (attempt.status === 'completed') return res.json({ success: true, message: 'Test already completed', attemptId: attempt._id });
 
@@ -717,8 +565,7 @@ export async function finishTest(req, res) {
       }
     }
 
-    let correct = 0, incorrect = 0, skipped = 0;
-    let totalMarks = 0, obtainedMarks = 0;
+    let correct = 0, incorrect = 0, skipped = 0, totalMarks = 0, obtainedMarks = 0;
     let easyCorrect = 0, easyTotal = 0, mediumCorrect = 0, mediumTotal = 0, hardCorrect = 0, hardTotal = 0;
 
     for (const ans of attempt.answers) {
@@ -744,11 +591,7 @@ export async function finishTest(req, res) {
       const sub = await SubjectiveSubmission.findById(subjectiveSubmissionId);
       if (sub) {
         attempt.subjectiveSubmissionId = sub._id;
-        attempt.subjectiveScore = {
-          totalMarks: sub.totalMarks,
-          obtainedMarks: sub.obtainedMarks,
-          percentage: sub.percentage
-        };
+        attempt.subjectiveScore = { totalMarks: sub.totalMarks, obtainedMarks: sub.obtainedMarks, percentage: sub.percentage };
       }
     }
 
@@ -756,11 +599,7 @@ export async function finishTest(req, res) {
     const combinedObtainedMarks = attempt.score.obtainedMarks + (attempt.subjectiveScore?.obtainedMarks || 0);
     const combinedPercentage = combinedTotalMarks > 0 ? Math.round((combinedObtainedMarks / combinedTotalMarks) * 100) : 0;
 
-    attempt.combinedScore = {
-      totalMarks: combinedTotalMarks,
-      obtainedMarks: combinedObtainedMarks,
-      percentage: combinedPercentage
-    };
+    attempt.combinedScore = { totalMarks: combinedTotalMarks, obtainedMarks: combinedObtainedMarks, percentage: combinedPercentage };
 
     let performanceLevel = 'Average';
     if (combinedPercentage >= 90) performanceLevel = 'Excellent';
@@ -776,13 +615,13 @@ export async function finishTest(req, res) {
       subtopicStats[st].total++;
       if (ans.isCorrect) subtopicStats[st].correct++;
     }
-    const weakAreas = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) < 0.5).map(([name, s]) => `${name} (${s.correct}/${s.total} correct)`);
-    const strengths = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) >= 0.7).map(([name, s]) => `${name} (${s.correct}/${s.total} correct)`);
+    const weakAreas = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) < 0.5).map(([name, s]) => `${name} (${s.correct}/${s.total})`);
+    const strengths = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) >= 0.7).map(([name, s]) => `${name} (${s.correct}/${s.total})`);
 
     const recommendations = [];
     if (combinedPercentage < 50) recommendations.push('Focus on revising the weak chapters before attempting more tests.');
     if (skipped > 0) recommendations.push(`You skipped ${skipped} questions — try answering all questions next time.`);
-    if (hardTotal > 0 && hardCorrect === 0) recommendations.push('Practice more Hard difficulty questions to improve advanced concept understanding.');
+    if (hardTotal > 0 && hardCorrect === 0) recommendations.push('Practice more Hard difficulty questions to improve advanced concepts.');
     if (combinedPercentage >= 75) recommendations.push('Great work! Try Hard Mode for an extra challenge.');
 
     attempt.aiAnalysis = {
@@ -796,7 +635,6 @@ export async function finishTest(req, res) {
     attempt.aiAnalysisEta = '2 min';
 
     await attempt.save();
-
     analysisQueue.enqueueAttempt(attempt._id).catch((err) => console.warn('Auto analysis enqueue warning:', err?.message));
 
     res.json({
@@ -834,24 +672,18 @@ export async function getResult(req, res) {
     });
 
     let subjectiveDetails = null;
-    if (attempt.subjectiveSubmissionId) {
-      subjectiveDetails = await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean();
-    }
+    if (attempt.subjectiveSubmissionId) subjectiveDetails = await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean();
 
     res.json({
       success: true,
       result: {
-        attemptId: attempt._id, testType: attempt.testType, subjectCode: attempt.subjectCode,
-        subjectName: attempt.subjectName, chapterNumber: attempt.chapterNumber, chapterTitle: attempt.chapterTitle,
-        medium: attempt.medium, totalQuestions: attempt.totalQuestions, 
-        score: attempt.score, 
-        subjectiveScore: attempt.subjectiveScore, 
-        combinedScore: attempt.combinedScore,     
+        attemptId: attempt._id, testType: attempt.testType, subjectCode: attempt.subjectCode, subjectName: attempt.subjectName,
+        chapterNumber: attempt.chapterNumber, chapterTitle: attempt.chapterTitle, medium: attempt.medium, totalQuestions: attempt.totalQuestions, 
+        score: attempt.score, subjectiveScore: attempt.subjectiveScore, combinedScore: attempt.combinedScore,     
         aiAnalysis: attempt.aiAnalysis, aiAnalysisStatus: attempt.aiAnalysisStatus || 'completed',
         aiAnalysisEta: attempt.aiAnalysisEta || '', durationMs: attempt.durationMs,
         startedAt: attempt.startedAt, finishedAt: attempt.finishedAt, isHardMode: attempt.isHardMode,
-        answers: detailedAnswers,
-        subjectiveDetails: subjectiveDetails 
+        answers: detailedAnswers, subjectiveDetails
       },
     });
   } catch (err) {
@@ -874,13 +706,10 @@ export async function getRecentResults(req, res) {
       success: true, count: attempts.length,
       results: attempts.map((a) => ({
         attemptId: a._id, testType: a.testType, subjectCode: a.subjectCode, subjectName: a.subjectName,
-        chapterNumber: a.chapterNumber, chapterTitle: a.chapterTitle, medium: a.medium,
-        totalQuestions: a.totalQuestions, 
-        score: a.score, 
-        subjectiveScore: a.subjectiveScore,
-        combinedScore: a.combinedScore,
-        performanceLevel: a.aiAnalysis?.performanceLevel || '',
-        durationMs: a.durationMs, startedAt: a.startedAt, finishedAt: a.finishedAt, isHardMode: a.isHardMode,
+        chapterNumber: a.chapterNumber, chapterTitle: a.chapterTitle, medium: a.medium, totalQuestions: a.totalQuestions, 
+        score: a.score, subjectiveScore: a.subjectiveScore, combinedScore: a.combinedScore,
+        performanceLevel: a.aiAnalysis?.performanceLevel || '', durationMs: a.durationMs, 
+        startedAt: a.startedAt, finishedAt: a.finishedAt, isHardMode: a.isHardMode,
       })),
     });
   } catch (err) {
@@ -971,14 +800,12 @@ export async function queueTestAnalysis(req, res) {
 
 export async function ingestPaper(req, res) {
   try {
-    if (!['super_admin', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
+    if (!['super_admin', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
 
     const { boardCode, classLevel, stream, subjectCode, subjectName, medium, year, examPhase, setCode, questions, sourceUrl, sourceCreditText, officialKeyUrl } = req.body;
 
     if (!boardCode || !classLevel || !subjectCode || !subjectName || !year || !examPhase || !questions || !Array.isArray(questions)) {
-      return res.status(400).json({ error: 'Missing required fields: boardCode, classLevel, subjectCode, subjectName, year, examPhase, questions[]' });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
     const normalizedMedium = normalizeMedium(medium || 'Hindi');
     if (!normalizedMedium) return res.status(400).json({ error: 'Unsupported medium' });
@@ -993,12 +820,8 @@ export async function ingestPaper(req, res) {
     await applyMvviVviTags(paper._id);
 
     res.json({
-      success: true, message: 'Official paper ingested and matched successfully',
-      paper: {
-        id: paper._id, paperCode: paper.paperCode, boardCode: paper.boardCode, classLevel: paper.classLevel,
-        subjectCode: paper.subjectCode, year: paper.year, examPhase: paper.examPhase,
-        setCode: paper.setCode, totalQuestions: paper.totalQuestions, status: paper.status,
-      },
+      success: true, message: 'Official paper ingested successfully',
+      paper: { id: paper._id, paperCode: paper.paperCode, boardCode: paper.boardCode, classLevel: paper.classLevel, subjectCode: paper.subjectCode, year: paper.year, examPhase: paper.examPhase, setCode: paper.setCode, totalQuestions: paper.totalQuestions, status: paper.status },
       matchResults,
     });
   } catch (err) {
@@ -1009,9 +832,7 @@ export async function ingestPaper(req, res) {
 
 export async function matchPaper(req, res) {
   try {
-    if (!['super_admin', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
+    if (!['super_admin', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
     const { paperId } = req.params;
     const results = await matchPaperQuestions(paperId);
     await applyMvviVviTags(paperId);
@@ -1024,9 +845,7 @@ export async function matchPaper(req, res) {
 
 export async function generateMvviTags(req, res) {
   try {
-    if (!['super_admin', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
+    if (!['super_admin', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
     const { paperId } = req.params;
     const result = await applyMvviVviTags(paperId);
     res.json({ success: true, message: 'MVVI/VVI tags calculated and applied', result });
@@ -1061,8 +880,7 @@ export async function getAvailablePapersForStudent(req, res) {
         paperId: p._id, paperCode: p.paperCode, year: p.year, examPhase: p.examPhase, setCode: p.setCode,
         totalQuestions: p.totalQuestions, totalMarks: p.totalMarks, sourceCreditText: p.sourceCreditText,
         mvviCount: p.mvviTags?.filter(t => t.tag === 'MVVI').length || 0,
-        vviCount: p.mvviTags?.filter(t => t.tag === 'VVI').length || 0,
-        matchStats: p.matchStats,
+        vviCount: p.mvviTags?.filter(t => t.tag === 'VVI').length || 0, matchStats: p.matchStats,
       })),
     });
   } catch (err) {
@@ -1130,13 +948,9 @@ export async function startPaperTest(req, res) {
       success: true, attemptId: attempt._id, testType: 'full_paper', subjectName: paper.subjectName,
       chapterTitle: attempt.chapterTitle, totalQuestions: mcqQuestions.length, medium: paper.medium,
       paperCode: paper.paperCode, year: paper.year, examPhase: paper.examPhase, setCode: paper.setCode,
-      sourceCreditText: paper.sourceCreditText, 
-      questions: safeQuestions,
+      sourceCreditText: paper.sourceCreditText, questions: safeQuestions,
       subjectiveQuestions: subjectiveQuestions.map(sq => ({
-        questionNumber: sq.questionNumber,
-        questionText: sq.questionText,
-        hindiQuestionText: sq.hindiQuestionText,
-        marks: sq.marks
+        questionNumber: sq.questionNumber, questionText: sq.questionText, hindiQuestionText: sq.hindiQuestionText, marks: sq.marks
       }))
     });
   } catch (err) {
@@ -1158,9 +972,7 @@ export async function getPaperAnswers(req, res) {
 
 export async function getPendingReviewPapers(req, res) {
   try {
-    if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
+    if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
     const papers = await getPapersPendingReview();
     res.json({ success: true, count: papers.length, papers });
   } catch (err) {
@@ -1171,9 +983,7 @@ export async function getPendingReviewPapers(req, res) {
 
 export async function reviewPaperMatch(req, res) {
   try {
-    if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
+    if (!['super_admin', 'admin', 'subject_admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
 
     const { paperId } = req.params;
     const { questionNumber, action } = req.body;
@@ -1183,7 +993,6 @@ export async function reviewPaperMatch(req, res) {
     }
 
     const result = await adminReviewMatch(paperId, Number(questionNumber), action, req.user._id);
-
     res.json({ success: true, message: `Match ${action}d successfully`, result });
   } catch (err) {
     console.error('reviewPaperMatch error:', err);
@@ -1207,14 +1016,8 @@ export async function getMvviAnalysis(req, res) {
     res.json({
       success: true, boardCode, classLevel, subjectCode,
       summary: { mvviCount: mvviTags.length, vviCount: vviTags.length, totalTagged: tags.length },
-      mvviTags: mvviTags.map(t => ({
-        questionText: t.questionText, hindiQuestionText: t.hindiQuestionText, reason: t.reason,
-        frequency: t.frequency, years: t.years, correctOption: t.correctOption,
-      })),
-      vviTags: vviTags.map(t => ({
-        questionText: t.questionText, hindiQuestionText: t.hindiQuestionText, reason: t.reason,
-        frequency: t.frequency, years: t.years, correctOption: t.correctOption,
-      })),
+      mvviTags: mvviTags.map(t => ({ questionText: t.questionText, hindiQuestionText: t.hindiQuestionText, reason: t.reason, frequency: t.frequency, years: t.years, correctOption: t.correctOption })),
+      vviTags: vviTags.map(t => ({ questionText: t.questionText, hindiQuestionText: t.hindiQuestionText, reason: t.reason, frequency: t.frequency, years: t.years, correctOption: t.correctOption })),
     });
   } catch (err) {
     console.error('getMvviAnalysis error:', err);
