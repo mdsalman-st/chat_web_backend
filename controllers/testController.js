@@ -344,7 +344,6 @@ export async function prepareChapterQuestions(req, res) {
     }
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    // 🚨 NAYA: Board Config se Pattern uthana 🚨
     const config = await getResolvedBoardConfig(boardCode);
     const boardPattern = config.paperPattern || { mcq: 50, twoMarks: 20, fiveMarks: 10 }; 
     
@@ -376,7 +375,7 @@ export async function prepareChapterQuestions(req, res) {
     const job = await queueOrGetChapterJob({
       boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, 
       targetCount,
-      pattern: boardPattern // 👈 AI Generator ko pattern bhej diya
+      pattern: boardPattern
     });
 
     res.json({
@@ -524,6 +523,42 @@ export async function startTest(req, res) {
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode is required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
+    // 🚨 RESUME LOGIC: Check if there is an ongoing attempt 🚨
+    let attempt = await TestAttempt.findOne({
+      userId: req.user._id,
+      boardCode: boardCode.toLowerCase(),
+      classLevel: String(classLevel),
+      subjectCode: subjectCode.toLowerCase(),
+      chapterNumber: chapterNumber ? Number(chapterNumber) : null,
+      medium,
+      status: 'in_progress'
+    });
+
+    if (attempt) {
+      const questions = await Question.find({ _id: { $in: attempt.questionIds } }).select('+correctOption +explanation').lean();
+      const mcqQuestions = questions.filter(q => q.type !== 'subjective');
+      const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
+
+      const safeMcqs = mcqQuestions.map((q, idx) => ({
+        index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
+        options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber,
+      }));
+
+      const safeSubjectives = subjectiveQuestions.map((q) => ({
+        id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
+        difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber,
+      }));
+
+      return res.json({
+        success: true, attemptId: attempt._id, testType: attempt.testType, subjectName: attempt.subjectName, chapterTitle: attempt.chapterTitle,
+        totalQuestions: mcqQuestions.length, medium: attempt.medium, 
+        questions: safeMcqs,
+        subjectiveQuestions: safeSubjectives,
+        answers: attempt.answers // 👈 Purane answers wapas bhej rahe hain
+      });
+    }
+
+    // Normal Flow (Naya test banayenge)
     const query = {
       classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(),
       medium, isActive: true, status: 'verified',
@@ -560,7 +595,6 @@ export async function startTest(req, res) {
     const limit = Math.min(finalLimit || 20, questions.length);
     questions = questions.slice(0, limit);
 
-    // 🚨 FIX: Questions ko MCQ aur Subjective mein alag karo 🚨
     const mcqQuestions = questions.filter(q => q.type !== 'subjective');
     const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
 
@@ -585,10 +619,10 @@ export async function startTest(req, res) {
       if (chapter) chapterTitle = chapterTitleForMedium(chapter, medium) || chapterTitle;
     }
 
-    const attempt = await TestAttempt.create({
+    attempt = await TestAttempt.create({
       userId: req.user._id, testType, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
       subjectCode: subjectCode.toLowerCase(), subjectName, chapterNumber: chapterNumber ? Number(chapterNumber) : null,
-      chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: mcqQuestions.length, // Total ab sirf MCQ count hai
+      chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: mcqQuestions.length,
       status: 'in_progress', startedAt: new Date(), isHardMode: !!isHardMode,
     });
 
@@ -605,8 +639,9 @@ export async function startTest(req, res) {
     res.json({
       success: true, attemptId: attempt._id, testType, subjectName, chapterTitle,
       totalQuestions: mcqQuestions.length, medium, 
-      questions: safeMcqs, // MCQ for interactive UI
-      subjectiveQuestions: safeSubjectives // Subjective for writing/upload
+      questions: safeMcqs,
+      subjectiveQuestions: safeSubjectives,
+      answers: []
     });
   } catch (err) {
     console.error('startTest error:', err);
