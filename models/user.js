@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
 
 const userSchema = new mongoose.Schema(
   {
@@ -68,7 +69,7 @@ const userSchema = new mongoose.Schema(
       classLevel: { type: String, default: '10' },
       stream: { type: String, default: null },
       streamName: { type: String, default: null },
-      medium: { type: String, enum: ['Hindi', 'English'], default: 'Hindi' },
+      medium: { type: String, enum: SUPPORTED_MEDIUMS, default: 'Hindi' },
       selectedSubjects: [
         {
           code: String,

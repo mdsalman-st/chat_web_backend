@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
 
 /**
  * OfficialPaper Schema
@@ -69,7 +70,7 @@ const officialPaperSchema = new mongoose.Schema(
     subjectName: { type: String, required: true },
     medium: {
       type: String,
-      enum: ['Hindi', 'English'],
+      enum: SUPPORTED_MEDIUMS,
       default: 'Hindi',
       index: true,
     },

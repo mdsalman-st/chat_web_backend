@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
 
 /**
  * Question Schema
@@ -88,7 +89,7 @@ const questionSchema = new mongoose.Schema(
     },
     medium: {
       type: String,
-      enum: ['Hindi', 'English'],
+      enum: SUPPORTED_MEDIUMS,
       default: 'Hindi',
       index: true,
     },

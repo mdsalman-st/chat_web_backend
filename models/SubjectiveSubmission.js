@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
 
 const pageEntrySchema = new mongoose.Schema(
   {
@@ -68,7 +69,7 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
     classLevel: { type: String, required: true, trim: true, index: true },
     subjectCode: { type: String, required: true, lowercase: true, trim: true, index: true },
     subjectName: { type: String, default: '' },
-    medium: { type: String, enum: ['Hindi', 'English'], default: 'Hindi' },
+    medium: { type: String, enum: SUPPORTED_MEDIUMS, default: 'Hindi' },
 
     paperId: {
       type: mongoose.Schema.Types.ObjectId,

@@ -35,11 +35,13 @@ export async function autoGenerateChapters(boardCode, classLevel, subjectCode, s
           classLevel: String(classLevel),
           subjectCode: subjectCode.toLowerCase(),
           chapterNumber: ch.chapterNumber,
+          medium: 'Both',
         },
         {
           $set: {
             title: ch.title,
             hindiTitle: ch.hindiTitle || ch.title,
+            medium: 'Both',
             stream: stream,
             phaseCutoff: 'annual', // Default to annual
             isLive: true,

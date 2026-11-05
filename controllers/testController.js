@@ -1,5 +1,4 @@
 import BoardConfig from '../models/BoardConfig.js';
-import Chapter from '../models/Chapter.js';
 import DemandBoard from '../models/DemandBoard.js';
 import User from '../models/user.js';
 import Question from '../models/Question.js';
@@ -29,8 +28,10 @@ import {
   getAvailableClasses,
   getStreamsForClass,
   getSubjectsForClass,
+  getChapterForMedium,
   getChaptersForSubject,
 } from '../utils/boardEngine.js';
+import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
 /**
  * Test Controller — Handles Board Configs, Dynamic Syllabi, and Student Academic Profiles
@@ -151,9 +152,13 @@ export async function getChapters(req, res) {
     const subjectCode = req.query.subject;
     const stream = req.query.stream || null;
     const phase = req.query.phase || null;
+    const medium = normalizeMedium(req.query.medium || req.user?.studentProfile?.medium || 'Hindi');
 
     if (!subjectCode) {
       return res.status(400).json({ error: 'subject query parameter is required' });
+    }
+    if (!medium) {
+      return res.status(400).json({ error: 'Unsupported medium' });
     }
 
     let { chapters, usedFallbackChapters } = await getChaptersForSubject({
@@ -162,6 +167,7 @@ export async function getChapters(req, res) {
       subjectCode,
       stream,
       phase,
+      medium,
     });
 
     // 🚨 FIX: AI Auto-Generation logic removed to prevent hallucinated/fake chapters.
@@ -176,11 +182,12 @@ export async function getChapters(req, res) {
       boardCode,
       classLevel,
       subjectCode,
+      medium,
       usedFallbackChapters,
       chapters: chapters.map((c) => ({
         id: c._id,
         chapterNumber: c.chapterNumber,
-        title: c.title,
+        title: chapterTitleForMedium(c, medium),
         hindiTitle: c.hindiTitle || '',
         phaseCutoff: c.phaseCutoff,
         questionCount: c.questionCount || 0,
@@ -243,6 +250,8 @@ export async function updateStudentProfile(req, res) {
 
     if (!board) return res.status(400).json({ error: 'Board selection is required' });
     if (!classLevel) return res.status(400).json({ error: 'Class level is required' });
+    const normalizedMedium = normalizeMedium(medium || 'Hindi');
+    if (!normalizedMedium) return res.status(400).json({ error: 'Unsupported language / medium' });
 
     const isOtherBoard = board === 'other' || board === 'Other';
     let resolvedBoardName = 'NCERT Default';
@@ -280,7 +289,7 @@ export async function updateStudentProfile(req, res) {
       classLevel: String(classLevel).replace(/[^0-9]/g, '') || String(classLevel),
       stream: stream || null,
       streamName: streamName || null,
-      medium: medium === 'English' ? 'English' : 'Hindi',
+      medium: normalizedMedium,
       selectedSubjects: Array.isArray(selectedSubjects) ? selectedSubjects : [],
       academicYear: req.body.academicYear || '2025-2026',
       targetGoal: targetGoal || '',
@@ -329,13 +338,14 @@ export async function prepareChapterQuestions(req, res) {
     const classLevel = req.body.classLevel || studentProf.classLevel || '10';
     const subjectCode = req.body.subjectCode;
     const chapterNumber = Number(req.body.chapterNumber);
-    const medium = req.body.medium || studentProf.medium || 'Hindi';
+    const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
     const isHardMode = !!req.body.isHardMode;
     const targetCount = Number(req.body.targetCount) || 10;
 
     if (!subjectCode || !chapterNumber) {
       return res.status(400).json({ error: 'subjectCode and chapterNumber are required' });
     }
+    if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const existingCount = await Question.countDocuments({
       boardCode: boardCode.toLowerCase(),
@@ -412,12 +422,13 @@ export async function getChapterPracticeQuestions(req, res) {
     const boardCode = req.query.boardCode || studentProf.board || 'bseb';
     const classLevel = req.query.classLevel || studentProf.classLevel || '10';
     const subjectCode = req.query.subjectCode;
-    const medium = req.query.medium || studentProf.medium || 'Hindi';
+    const medium = normalizeMedium(req.query.medium || studentProf.medium || 'Hindi');
     const limit = Math.min(50, Number(req.query.limit) || 15);
 
     if (!subjectCode || isNaN(chapterNumber)) {
       return res.status(400).json({ error: 'subjectCode query and valid chapterNumber param required' });
     }
+    if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const query = {
       classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(),
@@ -500,9 +511,10 @@ export async function startTest(req, res) {
 
     const boardCode = req.body.boardCode || studentProf.board || 'bseb';
     const classLevel = req.body.classLevel || studentProf.classLevel || '10';
-    const medium = req.body.medium || studentProf.medium || 'Hindi';
+    const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
 
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode is required' });
+    if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const query = {
       classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(),
@@ -541,8 +553,15 @@ export async function startTest(req, res) {
 
     let chapterTitle = chapterNumber ? `Chapter ${chapterNumber}` : 'Full Paper';
     if (chapterNumber) {
-      const ch = await Chapter.findOne({ classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber) }).lean();
-      if (ch) chapterTitle = ch.title || chapterTitle;
+      const chapter = await getChapterForMedium({
+        boardCode,
+        classLevel,
+        subjectCode,
+        chapterNumber,
+        stream: studentProf.stream,
+        medium,
+      });
+      if (chapter) chapterTitle = chapterTitleForMedium(chapter, medium) || chapterTitle;
     }
 
     const attempt = await TestAttempt.create({
@@ -901,9 +920,11 @@ export async function ingestPaper(req, res) {
     if (!boardCode || !classLevel || !subjectCode || !subjectName || !year || !examPhase || !questions || !Array.isArray(questions)) {
       return res.status(400).json({ error: 'Missing required fields: boardCode, classLevel, subjectCode, subjectName, year, examPhase, questions[]' });
     }
+    const normalizedMedium = normalizeMedium(medium || 'Hindi');
+    if (!normalizedMedium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const paper = await ingestOfficialPaper({
-      boardCode, classLevel, stream, subjectCode, subjectName, medium: medium || 'Hindi',
+      boardCode, classLevel, stream, subjectCode, subjectName, medium: normalizedMedium,
       year: Number(year), examPhase, setCode: setCode?.toUpperCase() || null, questions,
       sourceUrl, sourceCreditText, officialKeyUrl, ingestedBy: req.user._id,
     });
@@ -965,9 +986,10 @@ export async function getAvailablePapersForStudent(req, res) {
     const classLevel = req.query.classLevel || studentProf.classLevel || '10';
     const subjectCode = req.query.subjectCode;
     const stream = req.query.stream || studentProf.stream || null;
-    const medium = req.query.medium || studentProf.medium || 'Hindi';
+    const medium = normalizeMedium(req.query.medium || studentProf.medium || 'Hindi');
 
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode query parameter is required' });
+    if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const papers = await getAvailablePapers({
       boardCode, classLevel, subjectCode, stream, medium, examPhase: req.query.examPhase || null,

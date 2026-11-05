@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { CHAPTER_MEDIUMS } from '../utils/medium.js';
 
 /**
  * Chapter Schema
@@ -32,6 +33,14 @@ const chapterSchema = new mongoose.Schema(
       trim: true,
       index: true,
     }, // e.g. 'sci', 'math', 'phy', 'chem'
+    medium: {
+      type: String,
+      enum: CHAPTER_MEDIUMS,
+      default: 'Both',
+      required: true,
+      trim: true,
+      index: true,
+    },
     chapterNumber: {
       type: Number,
       required: true,
@@ -41,6 +50,20 @@ const chapterSchema = new mongoose.Schema(
       required: true,
       trim: true,
     }, // e.g. 'Chemical Reactions and Equations'
+    textbookTitle: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    ncertBookCode: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    sourceChapterNumber: {
+      type: Number,
+      default: null,
+    },
     hindiTitle: {
       type: String,
       trim: true,
@@ -77,8 +100,21 @@ const chapterSchema = new mongoose.Schema(
   }
 );
 
-// Compound index for fast lookup of a subject's chapters
-chapterSchema.index({ boardCode: 1, classLevel: 1, subjectCode: 1, chapterNumber: 1 }, { unique: true });
+// Keep existing bilingual chapters separate from language-specific editions.
+chapterSchema.index(
+  { boardCode: 1, classLevel: 1, subjectCode: 1, chapterNumber: 1, medium: 1 },
+  {
+    unique: true,
+    name: 'chapter_medium_unique',
+    partialFilterExpression: {
+      boardCode: { $type: 'string' },
+      classLevel: { $type: 'string' },
+      subjectCode: { $type: 'string' },
+      chapterNumber: { $type: 'number' },
+      medium: { $type: 'string' },
+    },
+  }
+);
 chapterSchema.index({ boardCode: 1, classLevel: 1, subjectCode: 1, phaseCutoff: 1 });
 
 const Chapter = mongoose.model('Chapter', chapterSchema);

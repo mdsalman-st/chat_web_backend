@@ -1,5 +1,6 @@
 import BoardConfig from '../models/BoardConfig.js';
 import Chapter from '../models/Chapter.js';
+import { normalizeMedium } from './medium.js';
 
 /**
  * Board Engine — The core dynamic engine for Nexus Test Module.
@@ -96,7 +97,72 @@ export function getSubjectsForClass(boardConfig, classLevel, streamId) {
 /**
  * Get chapters for a subject with fallback support
  */
-export async function getChaptersForSubject({ boardCode, classLevel, subjectCode, stream, phase }) {
+function preferredChapters(chapters, medium) {
+  const byChapterNumber = new Map();
+  for (const chapter of chapters) {
+    const current = byChapterNumber.get(chapter.chapterNumber);
+    const rank = chapter.medium === medium ? 2 : chapter.medium === 'Both' ? 1 : 0;
+    const currentRank = current
+      ? (current.medium === medium ? 2 : current.medium === 'Both' ? 1 : 0)
+      : -1;
+    if (rank > currentRank) byChapterNumber.set(chapter.chapterNumber, chapter);
+  }
+  return [...byChapterNumber.values()].sort((a, b) => a.chapterNumber - b.chapterNumber);
+}
+
+async function findChaptersForBoard({ boardCode, query, medium }) {
+  const chapters = await Chapter.find({
+    boardCode,
+    ...query,
+    medium: { $in: [medium, 'Both', null] },
+  })
+    .sort({ chapterNumber: 1 })
+    .lean();
+  return preferredChapters(chapters, medium);
+}
+
+export async function getChapterForMedium({
+  boardCode,
+  classLevel,
+  subjectCode,
+  chapterNumber,
+  stream,
+  medium = 'Hindi',
+}) {
+  const normalizedMedium = normalizeMedium(medium);
+  if (!normalizedMedium) throw new Error(`Unsupported medium: ${medium}`);
+
+  const query = {
+    classLevel: String(classLevel),
+    subjectCode: String(subjectCode).toLowerCase().trim(),
+    chapterNumber: Number(chapterNumber),
+    isActive: true,
+  };
+  if (stream) query.stream = stream;
+
+  const normalizedBoardCode = String(boardCode).toLowerCase().trim();
+  const boardCodes = normalizedBoardCode === 'ncert_default'
+    ? ['ncert_default']
+    : [normalizedBoardCode, 'ncert_default'];
+
+  const candidates = [];
+  for (const code of boardCodes) {
+    candidates.push(...await findChaptersForBoard({ boardCode: code, query, medium: normalizedMedium }));
+  }
+  return preferredChapters(candidates, normalizedMedium)[0] || null;
+}
+
+export async function getChaptersForSubject({
+  boardCode,
+  classLevel,
+  subjectCode,
+  stream,
+  phase,
+  medium = 'Hindi',
+}) {
+  const normalizedMedium = normalizeMedium(medium);
+  if (!normalizedMedium) throw new Error(`Unsupported medium: ${medium}`);
+
   const query = {
     classLevel: String(classLevel),
     subjectCode: String(subjectCode).toLowerCase().trim(),
@@ -106,26 +172,23 @@ export async function getChaptersForSubject({ boardCode, classLevel, subjectCode
   if (stream) query.stream = stream;
 
   // First try board specific chapters
-  let chapters = await Chapter.find({
-    boardCode: String(boardCode).toLowerCase().trim(),
-    ...query,
-  })
-    .sort({ chapterNumber: 1 })
-    .lean();
+  const normalizedBoardCode = String(boardCode).toLowerCase().trim();
+  const boardChapters = await findChaptersForBoard({
+    boardCode: normalizedBoardCode,
+    query,
+    medium: normalizedMedium,
+  });
 
-  // If no chapters found for this board, fall back to ncert_default chapters
-  let usedFallbackChapters = false;
-  if (!chapters || chapters.length === 0) {
-    chapters = await Chapter.find({
+  const fallbackChapters = normalizedBoardCode === 'ncert_default'
+    ? []
+    : await findChaptersForBoard({
       boardCode: 'ncert_default',
-      ...query,
-    })
-      .sort({ chapterNumber: 1 })
-      .lean();
-    if (chapters && chapters.length > 0) {
-      usedFallbackChapters = true;
-    }
-  }
+      query,
+      medium: normalizedMedium,
+    });
+  let chapters = preferredChapters([...boardChapters, ...fallbackChapters], normalizedMedium);
+  const usedFallbackChapters = chapters.some(chapter => chapter.boardCode === 'ncert_default')
+    && normalizedBoardCode !== 'ncert_default';
 
   // Filter by phase if specified
   if (phase && chapters.length > 0) {

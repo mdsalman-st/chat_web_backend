@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
 
 /**
  * TestAttempt Schema
@@ -43,7 +44,7 @@ const testAttemptSchema = new mongoose.Schema(
     subjectName: { type: String, default: '' },
     chapterNumber: { type: Number, default: null }, // null for full paper
     chapterTitle: { type: String, default: '' },
-    medium: { type: String, enum: ['Hindi', 'English'], default: 'Hindi' },
+    medium: { type: String, enum: SUPPORTED_MEDIUMS, default: 'Hindi' },
 
     // Question IDs for this test (order preserved)
     questionIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Question' }],

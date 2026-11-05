@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import BoardConfig from '../models/BoardConfig.js';
 import Chapter from '../models/Chapter.js';
+import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
 
 dotenv.config();
 
@@ -12,7 +13,7 @@ const BOARDS_DATA = [
     shortName: 'NCERT',
     hindiName: 'एनसीईआरटी पाठ्यक्रम',
     state: 'National',
-    supportedMediums: ['Hindi', 'English'],
+    supportedMediums: SUPPORTED_MEDIUMS,
     hasSetCode: false,
     setCodes: [],
     answerKeyFormat: 'letters',
@@ -466,12 +467,13 @@ export async function seedBoardConfigs() {
       classLevel: ch.classLevel,
       subjectCode: ch.subjectCode,
       chapterNumber: ch.chapterNumber,
+      medium: 'Both',
     };
     if (ch.stream) query.stream = ch.stream;
 
     await Chapter.findOneAndUpdate(
       query,
-      { $set: ch },
+      { $set: { ...ch, medium: 'Both' } },
       { upsert: true, new: true }
     );
   }

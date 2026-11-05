@@ -3,7 +3,8 @@ import Question from '../models/Question.js';
 import GenerationJob from '../models/GenerationJob.js';
 import OfficialPaper from '../models/OfficialPaper.js'; // 👈 NAYA IMPORT
 import { executeAiJsonWithFailover } from '../utils/aiClient.js';
-import { getResolvedBoardConfig } from '../utils/boardEngine.js';
+import { getChapterForMedium, getResolvedBoardConfig } from '../utils/boardEngine.js';
+import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
 /**
  * Question Generator & Dual-Model Verification Service
@@ -22,7 +23,8 @@ export async function queueOrGetChapterJob({
   isHardMode = false,
   targetCount = 10,
 }) {
-  const normMedium = medium.toLowerCase() === 'english' ? 'English' : 'Hindi';
+  const normMedium = normalizeMedium(medium);
+  if (!normMedium) throw new Error(`Unsupported medium: ${medium}`);
   const jobKey = `${boardCode.toLowerCase()}_${classLevel}_${subjectCode.toLowerCase()}_${chapterNumber}_${normMedium.toLowerCase()}_${isHardMode ? 'hard' : 'normal'}`;
 
   let job = await GenerationJob.findOne({ jobKey });
@@ -96,13 +98,17 @@ async function runGenerationAndVerification(job) {
   const { boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount } = job;
 
   const boardConfig = await getResolvedBoardConfig(boardCode);
-  const chapter = await Chapter.findOne({
-    classLevel: String(classLevel),
-    subjectCode: String(subjectCode).toLowerCase(),
-    chapterNumber: Number(chapterNumber),
-  }).lean();
+  const chapter = await getChapterForMedium({
+    boardCode,
+    classLevel,
+    subjectCode,
+    chapterNumber,
+    medium,
+  });
 
-  const chapterTitle = chapter?.title || `Chapter ${chapterNumber}`;
+  const chapterTitle = chapter
+    ? chapterTitleForMedium(chapter, medium)
+    : `Chapter ${chapterNumber}`;
   const chapterHindi = chapter?.hindiTitle || '';
   const isHindi = medium === 'Hindi';
 
@@ -158,7 +164,7 @@ STRICT RULES:
 3. DO NOT use outside knowledge, university-level theories, or out-of-syllabus concepts.
 4. Every question must have 4 clear, plausible options (A, B, C, D) with exactly one undeniably correct answer.
 5. Difficulty mix: ${isHardMode ? '10% Easy, 40% Medium, 50% Hard' : '30% Easy, 50% Medium, 20% Hard'}. Focus on concept application and 2-step reasoning.
-6. Language: Provide content in ${isHindi ? 'Hindi (with English technical terms in brackets if helpful)' : 'English'}.
+6. Language: Write the question, options, explanation, and subtopic in ${medium}${isHindi ? ' (with English technical terms in brackets if helpful)' : ''}. Include a Hindi translation in hindiQuestionText.
 7. Output MUST strictly match the requested JSON format.`;
 
   // 👇 Prompt mein Reference Context add kar diya 👇
@@ -167,7 +173,7 @@ Board: ${boardConfig.name}
 Class: ${classLevel}
 Subject: ${subjectCode}
 Chapter: ${chapterNumber} - ${chapterTitle} (${chapterHindi})
-Language: ${isHindi ? 'Hindi' : 'English'}
+Language: ${medium}
 Mode: ${isHardMode ? 'Hard Mode' : 'Standard Board Mode'}
 
 ${referenceContext ? `
@@ -182,8 +188,8 @@ Return JSON format:
 {
   "questions": [
     {
-      "questionText": "Question text in ${isHindi ? 'Hindi' : 'English'}",
-      "hindiQuestionText": "Hindi translation or original",
+      "questionText": "Question text in ${medium}",
+      "hindiQuestionText": "Hindi translation of questionText",
       "options": [
         { "key": "A", "text": "Option A text" },
         { "key": "B", "text": "Option B text" },
@@ -302,24 +308,23 @@ Return JSON format:
     classLevel: String(classLevel),
     subjectCode: subjectCode.toLowerCase(),
     chapterNumber: Number(chapterNumber),
+    medium,
     isActive: true,
     status: 'verified',
   });
 
-  await Chapter.updateMany(
-    {
-      classLevel: String(classLevel),
-      subjectCode: String(subjectCode).toLowerCase(),
-      chapterNumber: Number(chapterNumber),
-    },
-    {
-      $set: {
-        questionCount: totalVerifiedInDb,
-        verifiedQuestionCount: totalVerifiedInDb,
-        isLive: totalVerifiedInDb > 0,
-      },
-    }
-  );
+  if (chapter) {
+    await Chapter.updateOne(
+      { _id: chapter._id },
+      {
+        $set: {
+          questionCount: totalVerifiedInDb,
+          verifiedQuestionCount: totalVerifiedInDb,
+          isLive: totalVerifiedInDb > 0,
+        },
+      }
+    );
+  }
 
   // 5. Mark job completed
   await GenerationJob.findByIdAndUpdate(job._id, {
