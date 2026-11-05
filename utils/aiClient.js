@@ -4,12 +4,12 @@ import AiKeyUsage from '../models/AiKeyUsage.js';
 dotenv.config();
 
 /**
- * AI Provider Service with Failover Chain
- * Gemini 1 -> Gemini 2 -> Gemini 3 -> Groq -> User-friendly fallback
+ * AI Provider Service with Smart Failover & Correct Models
  */
 
-const GEMINI_MODEL = 'gemini-3.8-flash';
-const GROQ_MODEL = 'openai/gpt-oss-120b';
+// ✅ Sahi aur Naye Models
+const GEMINI_MODEL = 'gemini-3.8-flash'; 
+const GROQ_MODEL = 'openai/gpt-oss-120b'; 
 
 function getTodayString() {
   return new Date().toISOString().slice(0, 10);
@@ -28,13 +28,13 @@ async function recordKeyUsage(keyId, isRateLimit = false, isError = false) {
       { upsert: true }
     );
   } catch (e) {
-    // Non-blocking usage tracking
+    // Non-blocking
   }
 }
 
-/**
- * Call Gemini API with a specific key
- */
+// 🚨 Timeout 45 seconds (taaki heavy questions generate ho sakein)
+const TIMEOUT_MS = 45000; 
+
 async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
@@ -47,16 +47,14 @@ async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction) {
   };
 
   if (systemInstruction) {
-    payload.systemInstruction = {
-      parts: [{ text: systemInstruction }],
-    };
+    payload.systemInstruction = { parts: [{ text: systemInstruction }] };
   }
 
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(25000), // 25s timeout
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
   if (res.status === 429) {
@@ -74,16 +72,11 @@ async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction) {
   await recordKeyUsage(keyIdentifier, false, false);
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error(`Gemini ${keyIdentifier} returned empty content`);
-  }
+  if (!text) throw new Error(`Gemini ${keyIdentifier} returned empty content`);
 
   return JSON.parse(text);
 }
 
-/**
- * Call Groq API with Groq key
- */
 async function callGroq(apiKey, prompt, systemInstruction) {
   const url = 'https://api.groq.com/openai/v1/chat/completions';
 
@@ -105,7 +98,7 @@ async function callGroq(apiKey, prompt, systemInstruction) {
       response_format: { type: 'json_object' },
       temperature: 0.2,
     }),
-    signal: AbortSignal.timeout(30000), // 30s timeout
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
   if (res.status === 429) {
@@ -123,51 +116,33 @@ async function callGroq(apiKey, prompt, systemInstruction) {
   await recordKeyUsage('groq', false, false);
 
   const text = data.choices?.[0]?.message?.content;
-  if (!text) {
-    throw new Error('Groq returned empty content');
-  }
+  if (!text) throw new Error('Groq returned empty content');
 
   return JSON.parse(text);
 }
 
-/**
- * Unified AI JSON caller with full failover rotation
- */
-/**
- * Call Gemini Vision API with a specific key (for image + text prompts)
- */
 async function callGeminiVision(apiKey, keyIdentifier, imageBase64, mimeType, prompt, systemInstruction) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
   const payload = {
     contents: [{
       parts: [
-        {
-          inline_data: {
-            mime_type: mimeType,
-            data: imageBase64,
-          },
-        },
+        { inline_data: { mime_type: mimeType, data: imageBase64 } },
         { text: prompt },
       ],
     }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.2,
-    },
+    generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
   };
 
   if (systemInstruction) {
-    payload.systemInstruction = {
-      parts: [{ text: systemInstruction }],
-    };
+    payload.systemInstruction = { parts: [{ text: systemInstruction }] };
   }
 
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(15000), // 15s timeout for vision/OCR
+    signal: AbortSignal.timeout(30000), 
   });
 
   if (res.status === 429) {
@@ -185,44 +160,46 @@ async function callGeminiVision(apiKey, keyIdentifier, imageBase64, mimeType, pr
   await recordKeyUsage(keyIdentifier, false, false);
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error(`Gemini Vision ${keyIdentifier} returned empty content`);
-  }
+  if (!text) throw new Error(`Gemini Vision ${keyIdentifier} returned empty content`);
 
   return JSON.parse(text);
 }
 
+/**
+ * Unified AI JSON caller with SMART failover rotation
+ */
 export async function executeAiJsonWithFailover({ prompt, systemInstruction = '', taskType = 'heavy' }) {
   const providers = [];
-
-  // For fast/short tasks (explanations), Groq can be first, otherwise Gemini 1 -> 2 -> 3 -> Groq
   const gemini1 = process.env.GEMINI_KEY_1;
   const gemini2 = process.env.GEMINI_KEY_2;
   const gemini3 = process.env.GEMINI_KEY_3;
   const groq = process.env.GROQ_KEY;
 
-  if (taskType === 'fast' && groq) {
-    providers.push({ name: 'groq', fn: () => callGroq(groq, prompt, systemInstruction) });
-  }
-
+  // ✅ Groq ko Primary rakha (fast aur reliable)
+  if (groq) providers.push({ name: 'groq', fn: () => callGroq(groq, prompt, systemInstruction) });
+  
+  // Agar Groq fail ho, tab Gemini try karo
   if (gemini1) providers.push({ name: 'gemini_1', fn: () => callGemini(gemini1, 'gemini_1', prompt, systemInstruction) });
   if (gemini2) providers.push({ name: 'gemini_2', fn: () => callGemini(gemini2, 'gemini_2', prompt, systemInstruction) });
   if (gemini3) providers.push({ name: 'gemini_3', fn: () => callGemini(gemini3, 'gemini_3', prompt, systemInstruction) });
 
-  if (taskType !== 'fast' && groq) {
-    providers.push({ name: 'groq', fn: () => callGroq(groq, prompt, systemInstruction) });
-  }
-
   const errors = [];
 
-  for (const provider of providers) {
+  for (let i = 0; i < providers.length; i++) {
+    const provider = providers[i];
     try {
       console.log(`🤖 Invoking AI provider: ${provider.name} for task: ${taskType}`);
       const result = await provider.fn();
       return { result, providerName: provider.name };
     } catch (err) {
-      console.warn(`⚠️ Provider ${provider.name} failed: ${err.message}. Rotating to next in chain…`);
+      console.warn(`⚠️ Provider ${provider.name} failed: ${err.message}.`);
       errors.push(`${provider.name}: ${err.message}`);
+      
+      // ✅ Smart Delay: 2 second wait before next provider
+      if (i < providers.length - 1) {
+        console.log(`⏳ Waiting 2 seconds before trying next provider...`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
   }
 
@@ -233,7 +210,7 @@ export async function executeAiJsonWithFailover({ prompt, systemInstruction = ''
 }
 
 /**
- * Unified AI Vision JSON caller with failover (Gemini 1 -> 2 -> 3)
+ * Unified AI Vision JSON caller with failover
  */
 export async function executeGeminiVisionWithFailover({ imageBase64, mimeType = 'image/jpeg', prompt, systemInstruction = '' }) {
   const gemini1 = process.env.GEMINI_KEY_1;
@@ -245,19 +222,19 @@ export async function executeGeminiVisionWithFailover({ imageBase64, mimeType = 
   if (gemini2) providers.push({ name: 'gemini_2', fn: () => callGeminiVision(gemini2, 'gemini_2', imageBase64, mimeType, prompt, systemInstruction) });
   if (gemini3) providers.push({ name: 'gemini_3', fn: () => callGeminiVision(gemini3, 'gemini_3', imageBase64, mimeType, prompt, systemInstruction) });
 
-  if (providers.length === 0) {
-    throw new Error('No Gemini API keys configured for Vision OCR');
-  }
+  if (providers.length === 0) throw new Error('No Gemini API keys configured for Vision OCR');
 
   const errors = [];
-  for (const provider of providers) {
+  for (let i = 0; i < providers.length; i++) {
+    const provider = providers[i];
     try {
       console.log(`🤖 Invoking Vision AI: ${provider.name}`);
       const result = await provider.fn();
       return { result, providerName: provider.name };
     } catch (err) {
-      console.warn(`⚠️ Vision provider ${provider.name} failed: ${err.message}. Rotating…`);
+      console.warn(`⚠️ Vision provider ${provider.name} failed: ${err.message}.`);
       errors.push(`${provider.name}: ${err.message}`);
+      if (i < providers.length - 1) await new Promise(r => setTimeout(r, 1500));
     }
   }
 
