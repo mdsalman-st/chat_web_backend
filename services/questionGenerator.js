@@ -89,26 +89,22 @@ export async function queueOrGetChapterJob({
 }
 
 /**
- * Worker logic: Call 1 (Generation) + Call 2 (Independent Verification)
+ * Worker logic: Batch Generation (Max 5 questions per loop) + Verification
  */
 async function runGenerationAndVerification(job) {
   const { boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode } = job;
 
   const boardConfig = await getResolvedBoardConfig(boardCode);
   
-  // 🚨 NAYA LOGIC: Board Config se Pattern uthana 🚨
-  const pattern = boardConfig.paperPattern || { mcq: 20, twoMarks: 5, fiveMarks: 2 };
-  const mcqCount = pattern.mcq || 0;
-  const twoMarksCount = pattern.twoMarks || 0;
-  const fiveMarksCount = pattern.fiveMarks || 0;
-  const totalRequired = mcqCount + twoMarksCount + fiveMarksCount;
+  // 1. Board Config se Pattern nikaalo
+  const pattern = boardConfig.paperPattern || { mcq: 50, twoMarks: 20, fiveMarks: 10 };
+  const reqMcq = pattern.mcq || 0;
+  const reqTwoMarks = pattern.twoMarks || 0;
+  const reqFiveMarks = pattern.fiveMarks || 0;
+  const totalRequired = reqMcq + reqTwoMarks + reqFiveMarks;
 
   const chapter = await getChapterForMedium({
-    boardCode,
-    classLevel,
-    subjectCode,
-    chapterNumber,
-    medium,
+    boardCode, classLevel, subjectCode, chapterNumber, medium,
   });
 
   const chapterTitle = chapter ? chapterTitleForMedium(chapter, medium) : `Chapter ${chapterNumber}`;
@@ -116,13 +112,10 @@ async function runGenerationAndVerification(job) {
   const isHindi = medium === 'Hindi';
 
   await GenerationJob.findByIdAndUpdate(job._id, {
-    $set: {
-      progressPercent: 20,
-      progressMessage: `Fetching Official Board Papers for reference…`,
-    },
+    $set: { progressPercent: 20, progressMessage: `Fetching Official Board Papers for reference…` },
   });
 
-  // Database se Reference Text nikalna
+  // 2. Reference Material lao
   let referenceContext = "";
   try {
     const pastPapers = await OfficialPaper.find({
@@ -131,252 +124,162 @@ async function runGenerationAndVerification(job) {
       subjectCode: subjectCode.toLowerCase(),
       status: 'ingested',
       extractedText: { $ne: '' }
-    }).limit(3).select('extractedText').lean();
+    }).limit(2).select('extractedText').lean();
 
     if (pastPapers.length > 0) {
       let combinedText = pastPapers.map(p => p.extractedText).join('\n\n--- NEXT PAPER ---\n\n');
-      if (combinedText.length > 4000) {
-        combinedText = combinedText.substring(0, 4000) + '\n...[Text Truncated for Token Limit]...';
-      }
+      if (combinedText.length > 3000) combinedText = combinedText.substring(0, 3000) + '...[Truncated]...';
       referenceContext = combinedText;
     }
-  } catch (err) {
-    console.warn(`[AI Gen] Failed to fetch reference papers: ${err.message}`);
-  }
+  } catch (err) {}
 
-  await GenerationJob.findByIdAndUpdate(job._id, {
-    $set: {
-      progressPercent: 25,
-      progressMessage: `Analyzing chapter topics for ${chapterTitle}…`,
-    },
-  });
-
-  // 2. Formulate generation prompt (Call 1)
-  const systemInstruction = `You are a senior board exam question creator for ${boardConfig.name}.
-STRICT RULES:
-1. ONLY generate questions directly from the prescribed Class ${classLevel} ${subjectCode} syllabus for Chapter ${chapterNumber} ("${chapterTitle}").
-2. If "REFERENCE MATERIAL" is provided, heavily prioritize the question style and difficulty level.
-3. DO NOT use outside knowledge.
-4. Language: Write in ${medium}${isHindi ? ' (with English technical terms in brackets if helpful)' : ''}. Include a Hindi translation in hindiQuestionText.
-5. Output MUST strictly match the requested JSON format.`;
-
-  // 👇 Prompt update kiya gaya hai taaki AI exact pattern follow kare
-  const prompt = `Generate a complete chapter-wise test paper as per the Board Pattern:
+  // 3. Existing Questions count karo taaki duplicate na ho
+  let existingMcqs = await Question.countDocuments({ boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium, type: 'mcq', status: 'verified' });
+  let existingSubjs = await Question.countDocuments({ boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium, type: 'subjective', status: 'verified' });
   
-📌 STRICT PATTERN TO FOLLOW:
-- ${mcqCount} Multiple Choice Questions (1 mark each)
-- ${twoMarksCount} Subjective Questions (2 marks each)
-- ${fiveMarksCount} Subjective Questions (5 marks each)
+  let verifiedCount = existingMcqs + existingSubjs;
+  let loopCount = 0;
+  let failedBatches = 0;
 
-Chapter Details:
-- Class: ${classLevel}
-- Subject: ${subjectCode}
-- Chapter: ${chapterNumber} - ${chapterTitle} (${chapterHindi})
-- Language: ${medium}
+  // 4. LOOP: Jab tak pattern poora na ho jaye
+  while (verifiedCount < totalRequired && loopCount < 30) {
+    loopCount++;
+    
+    const neededMcq = Math.max(0, reqMcq - existingMcqs);
+    const neededSubjTotal = Math.max(0, (reqTwoMarks + reqFiveMarks) - existingSubjs);
+    
+    if (neededMcq === 0 && neededSubjTotal === 0) break;
 
-${referenceContext ? `
-### REFERENCE MATERIAL (Previous Year Board Papers):
-"""
-${referenceContext}
-"""
-Use the above reference material as the primary source for question patterns.
-` : ''}
+    // Ek batch mein max 5 questions (taaki AI ka token limit na toote)
+    let batchMcq = Math.min(5, neededMcq);
+    let batchSubj = Math.min(5, neededSubjTotal);
+    
+    if (batchMcq === 0 && batchSubj > 0) batchSubj = Math.min(5, neededSubjTotal);
+    if (batchSubj === 0 && batchMcq > 0) batchMcq = Math.min(5, neededMcq);
 
-Return JSON format:
+    await GenerationJob.findByIdAndUpdate(job._id, {
+      $set: {
+        progressPercent: Math.min(90, 20 + Math.round((verifiedCount / totalRequired) * 70)),
+        progressMessage: `Generating batch ${loopCount}... (${verifiedCount}/${totalRequired} done)`,
+        verifiedCount,
+      },
+    });
+
+    const prompt = `Generate a small batch of questions for:
+Class: ${classLevel} | Subject: ${subjectCode} | Chapter: ${chapterNumber} - ${chapterTitle} (${chapterHindi})
+Language: ${medium}
+
+📌 BATCH REQUIREMENTS:
+- ${batchMcq} Multiple Choice Questions (1 mark each)
+- ${batchSubj} Subjective Questions (2 or 5 marks each)
+
+${referenceContext ? `REFERENCE MATERIAL:\n"""\n${referenceContext}\n"""` : ''}
+
+Return EXACT JSON format:
 {
   "questions": [
     {
       "type": "mcq",
-      "questionText": "Question text in ${medium}",
+      "questionText": "Question in ${medium}",
       "hindiQuestionText": "Hindi translation",
-      "options": [
-        { "key": "A", "text": "Option A" },
-        { "key": "B", "text": "Option B" },
-        { "key": "C", "text": "Option C" },
-        { "key": "D", "text": "Option D" }
-      ],
+      "options": [ { "key": "A", "text": "..." }, { "key": "B", "text": "..." }, { "key": "C", "text": "..." }, { "key": "D", "text": "..." } ],
       "correctOption": "A",
       "explanation": "Step-by-step reason",
       "marks": 1,
-      "difficulty": "Easy" | "Medium" | "Hard",
+      "difficulty": "Medium",
       "subtopic": "Sub-concept"
     },
     {
       "type": "subjective",
-      "questionText": "Question text in ${medium}",
+      "questionText": "Question in ${medium}",
       "hindiQuestionText": "Hindi translation",
-      "modelAnswer": "Detailed ideal answer for evaluation",
-      "marks": 2, // or 5
-      "difficulty": "Easy" | "Medium" | "Hard",
+      "modelAnswer": "Detailed ideal answer",
+      "marks": 2, 
+      "difficulty": "Medium",
       "subtopic": "Sub-concept"
     }
   ]
 }`;
 
-  console.log(`[AI Gen] Initiating Call 1 for ${job.jobKey}…`);
-  const genResponse = await executeAiJsonWithFailover({
-    prompt,
-    systemInstruction,
-    taskType: 'heavy',
-  });
+    try {
+      const genResponse = await executeAiJsonWithFailover({
+        prompt,
+        systemInstruction: `You are a senior board exam question creator for ${boardConfig.name}. Follow syllabus strictly.`,
+        taskType: 'heavy',
+      });
 
-  const candidates = genResponse.result?.questions || [];
-  if (candidates.length === 0) {
-    throw new Error('AI generator returned 0 questions');
-  }
+      const candidates = genResponse.result?.questions || [];
+      
+      if (candidates.length === 0) {
+        failedBatches++;
+        if (failedBatches > 3) throw new Error('AI is failing to generate questions. Please try again.');
+        continue;
+      }
 
-  await GenerationJob.findByIdAndUpdate(job._id, {
-    $set: {
-      progressPercent: 55,
-      progressMessage: `Generated ${candidates.length} candidates. Initiating independent verification…`,
-      generatedCount: candidates.length,
-    },
-  });
+      // Verification Loop for the batch
+      for (const candidate of candidates) {
+        if (candidate.type === 'mcq') {
+          try {
+            // Dual-model verification for MCQs
+            const solverPrompt = `Solve this MCQ:\nQ: ${candidate.questionText}\nOptions:\n${candidate.options.map(o => `${o.key}) ${o.text}`).join('\n')}\nReturn JSON: { "selectedOption": "A" | "B" | "C" | "D" }`;
+            const solverRes = await executeAiJsonWithFailover({
+              prompt: solverPrompt,
+              systemInstruction: 'You are an objective exam key verifier. Select only the correct option.',
+              taskType: 'fast',
+            });
 
-  // 3. Independent Verification Pipeline (Call 2)
-  console.log(`[AI Gen] Initiating Call 2 for ${candidates.length} candidates…`);
-  let verifiedCount = 0;
+            const solvedKey = String(solverRes.result?.selectedOption || '').trim().toUpperCase();
+            const expectedKey = String(candidate.correctOption || '').trim().toUpperCase();
 
-  for (let i = 0; i < candidates.length; i++) {
-    const candidate = candidates[i];
-    
-    // 🚨 NAYA LOGIC: MCQ aur Subjective ka verification alag hoga 🚨
-    if (candidate.type === 'mcq') {
-      const solverPrompt = `You are an independent board exam evaluator. Solve the following question without bias.
-Question: ${candidate.questionText}
-Options:
-${candidate.options.map((o) => `${o.key}) ${o.text}`).join('\n')}
-
-Identify the single correct option (A, B, C, or D).
-Return JSON format:
-{
-  "selectedOption": "A" | "B" | "C" | "D",
-  "reason": "Brief verification reason"
-}`;
-
-      try {
-        const solverRes = await executeAiJsonWithFailover({
-          prompt: solverPrompt,
-          systemInstruction: 'You are an objective exam key verifier. Select only the logically correct option.',
-          taskType: 'fast',
-        });
-
-        const solvedKey = String(solverRes.result?.selectedOption || '').trim().toUpperCase();
-        const expectedKey = String(candidate.correctOption || '').trim().toUpperCase();
-
-        if (solvedKey && solvedKey === expectedKey) {
+            if (solvedKey && solvedKey === expectedKey) {
+              await Question.findOneAndUpdate(
+                { boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), questionText: candidate.questionText.trim(), medium },
+                { $set: { hindiQuestionText: candidate.hindiQuestionText, options: candidate.options, correctOption: candidate.correctOption, explanation: candidate.explanation, difficulty: candidate.difficulty || 'Medium', subtopic: candidate.subtopic || '', chapterTitle, type: 'mcq', marks: 1, isAiGenerated: true, sourceLabel: 'AI-generated', status: 'verified', isActive: true } },
+                { upsert: true, new: true }
+              );
+              existingMcqs++;
+              verifiedCount++;
+            }
+          } catch (vErr) { 
+            console.warn(`MCQ Verification failed: ${vErr.message}`); 
+          }
+        } else if (candidate.type === 'subjective') {
+          // Subjectives ko bina verification ke save karo
           await Question.findOneAndUpdate(
-            {
-              boardCode: boardCode.toLowerCase(),
-              classLevel: String(classLevel),
-              subjectCode: subjectCode.toLowerCase(),
-              chapterNumber: Number(chapterNumber),
-              questionText: candidate.questionText.trim(),
-              medium,
-            },
-            {
-              $set: {
-                hindiQuestionText: candidate.hindiQuestionText || candidate.questionText,
-                options: candidate.options,
-                correctOption: candidate.correctOption,
-                explanation: candidate.explanation || '',
-                difficulty: candidate.difficulty || 'Medium',
-                subtopic: candidate.subtopic || '',
-                chapterTitle,
-                type: 'mcq',
-                marks: 1,
-                isAiGenerated: true,
-                sourceLabel: 'AI-generated practice question',
-                status: 'verified',
-                verifiedBy: `dual-model (${genResponse.providerName} + ${solverRes.providerName})`,
-                isActive: true,
-              },
-            },
+            { boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), questionText: candidate.questionText.trim(), medium },
+            { $set: { hindiQuestionText: candidate.hindiQuestionText, modelAnswer: candidate.modelAnswer || '', difficulty: candidate.difficulty || 'Medium', subtopic: candidate.subtopic || '', chapterTitle, type: 'subjective', marks: candidate.marks || 2, isAiGenerated: true, sourceLabel: 'AI-generated', status: 'verified', isActive: true } },
             { upsert: true, new: true }
           );
+          existingSubjs++;
           verifiedCount++;
-        } else {
-          console.warn(`[AI Gen] Verification Discrepancy on Q${i + 1}: Generator said ${expectedKey}, Solver said ${solvedKey}. Discarding.`);
         }
-      } catch (vErr) {
-        console.warn(`[AI Gen] Verification failed on Q${i + 1}: ${vErr.message}`);
       }
-    } else {
-      // Subjective Question: Hum AI se verify nahi karwayenge, seedha save kar denge (kyunki iska model answer AI ne hi diya hai)
-      await Question.findOneAndUpdate(
-        {
-          boardCode: boardCode.toLowerCase(),
-          classLevel: String(classLevel),
-          subjectCode: subjectCode.toLowerCase(),
-          chapterNumber: Number(chapterNumber),
-          questionText: candidate.questionText.trim(),
-          medium,
-        },
-        {
-          $set: {
-            hindiQuestionText: candidate.hindiQuestionText || candidate.questionText,
-            modelAnswer: candidate.modelAnswer || '', // 👈 Subjective ka answer
-            difficulty: candidate.difficulty || 'Medium',
-            subtopic: candidate.subtopic || '',
-            chapterTitle,
-            type: 'subjective', // 👈 Type subjective
-            marks: candidate.marks || 2, // 2 ya 5
-            isAiGenerated: true,
-            sourceLabel: 'AI-generated practice question',
-            status: 'verified',
-            isActive: true,
-          },
-        },
-        { upsert: true, new: true }
-      );
-      verifiedCount++;
+    } catch (err) {
+      console.warn(`[AI Gen] Batch ${loopCount} failed: ${err.message}`);
+      failedBatches++;
+      if (failedBatches > 5) {
+        throw new Error('Too many failed batches. Stopping generation.');
+      }
     }
-
-    const currentProgress = Math.min(95, 55 + Math.round(((i + 1) / candidates.length) * 40));
-    await GenerationJob.findByIdAndUpdate(job._id, {
-      $set: {
-        progressPercent: currentProgress,
-        progressMessage: `Verified ${verifiedCount} of ${i + 1} questions…`,
-        verifiedCount,
-      },
-    });
+    
+    // Rate limit se bachne ke liye 2 second ka gap
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  // 4. Update Chapter question counters
+  // 5. Chapter question counters update karo
   const totalVerifiedInDb = await Question.countDocuments({
-    boardCode: boardCode.toLowerCase(),
-    classLevel: String(classLevel),
-    subjectCode: subjectCode.toLowerCase(),
-    chapterNumber: Number(chapterNumber),
-    medium,
-    isActive: true,
-    status: 'verified',
+    boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium, isActive: true, status: 'verified',
   });
 
   if (chapter) {
-    await Chapter.updateOne(
-      { _id: chapter._id },
-      {
-        $set: {
-          questionCount: totalVerifiedInDb,
-          verifiedQuestionCount: totalVerifiedInDb,
-          isLive: totalVerifiedInDb > 0,
-        },
-      }
-    );
+    await Chapter.updateOne({ _id: chapter._id }, { $set: { questionCount: totalVerifiedInDb, verifiedQuestionCount: totalVerifiedInDb, isLive: totalVerifiedInDb > 0 } });
   }
 
-  // 5. Mark job completed
+  // 6. Mark job completed
   await GenerationJob.findByIdAndUpdate(job._id, {
-    $set: {
-      status: 'completed',
-      progressPercent: 100,
-      progressMessage: `Ready! ${verifiedCount} verified questions generated as per pattern.`,
-      verifiedCount,
-      completedAt: new Date(),
-    },
+    $set: { status: 'completed', progressPercent: 100, progressMessage: `Ready! ${totalVerifiedInDb} questions generated as per pattern.`, verifiedCount: totalVerifiedInDb, completedAt: new Date() },
   });
 
-  console.log(`✅ [AI Gen] Job ${job.jobKey} finished. Verified: ${verifiedCount}`);
-  return { verifiedCount, totalVerifiedInDb };
+  console.log(`✅ [AI Gen] Job ${job.jobKey} finished. Verified: ${totalVerifiedInDb}`);
+  return { verifiedCount: totalVerifiedInDb, totalVerifiedInDb };
 }
