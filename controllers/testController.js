@@ -170,8 +170,6 @@ export async function getChapters(req, res) {
       medium,
     });
 
-    // 🚨 FIX: AI Auto-Generation logic removed to prevent hallucinated/fake chapters.
-    // Now it strictly relies on the database. If empty, it returns an empty array.
     if (!chapters) {
       chapters = [];
     }
@@ -340,12 +338,20 @@ export async function prepareChapterQuestions(req, res) {
     const chapterNumber = Number(req.body.chapterNumber);
     const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
     const isHardMode = !!req.body.isHardMode;
-    const targetCount = Number(req.body.targetCount) || 10;
 
     if (!subjectCode || !chapterNumber) {
       return res.status(400).json({ error: 'subjectCode and chapterNumber are required' });
     }
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
+
+    // 🚨 NAYA: Board Config se Pattern uthana 🚨
+    const config = await getResolvedBoardConfig(boardCode);
+    const boardPattern = config.paperPattern || { mcq: 50, twoMarks: 20, fiveMarks: 10 }; 
+    
+    const mcqCount = boardPattern.mcq || 0;
+    const twoMarks = boardPattern.twoMarks || 0;
+    const fiveMarks = boardPattern.fiveMarks || 0;
+    const targetCount = Number(req.body.targetCount) || (mcqCount + twoMarks + fiveMarks) || 20;
 
     const existingCount = await Question.countDocuments({
       boardCode: boardCode.toLowerCase(),
@@ -357,18 +363,20 @@ export async function prepareChapterQuestions(req, res) {
       status: 'verified',
     });
 
-    if (existingCount >= 5) {
+    if (existingCount >= targetCount) {
       return res.json({
         success: true,
         ready: true,
         isGenerating: false,
         count: existingCount,
-        message: `Chapter questions are ready (${existingCount} verified questions available).`,
+        message: `Chapter questions are ready (${existingCount} verified questions as per Board Pattern).`,
       });
     }
 
     const job = await queueOrGetChapterJob({
-      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount,
+      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, 
+      targetCount,
+      pattern: boardPattern // 👈 AI Generator ko pattern bhej diya
     });
 
     res.json({
@@ -540,8 +548,21 @@ export async function startTest(req, res) {
       [questions[i], questions[j]] = [questions[j], questions[i]];
     }
 
-    const limit = Math.min(questionLimit || 15, questions.length);
+    let finalLimit = Number(questionLimit);
+    if (!finalLimit) {
+       try {
+         const config = await getResolvedBoardConfig(boardCode);
+         const pattern = config.paperPattern || {};
+         finalLimit = (pattern.mcq || 0) + (pattern.twoMarks || 0) + (pattern.fiveMarks || 0);
+       } catch (e) { /* ignore */ }
+    }
+    
+    const limit = Math.min(finalLimit || 20, questions.length);
     questions = questions.slice(0, limit);
+
+    // 🚨 FIX: Questions ko MCQ aur Subjective mein alag karo 🚨
+    const mcqQuestions = questions.filter(q => q.type !== 'subjective');
+    const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
 
     let subjectName = subjectCode;
     try {
@@ -567,18 +588,25 @@ export async function startTest(req, res) {
     const attempt = await TestAttempt.create({
       userId: req.user._id, testType, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
       subjectCode: subjectCode.toLowerCase(), subjectName, chapterNumber: chapterNumber ? Number(chapterNumber) : null,
-      chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: questions.length,
+      chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: mcqQuestions.length, // Total ab sirf MCQ count hai
       status: 'in_progress', startedAt: new Date(), isHardMode: !!isHardMode,
     });
 
-    const safeQuestions = questions.map((q, idx) => ({
+    const safeMcqs = mcqQuestions.map((q, idx) => ({
       index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
       options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber,
     }));
 
+    const safeSubjectives = subjectiveQuestions.map((q) => ({
+      id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText,
+      difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber,
+    }));
+
     res.json({
       success: true, attemptId: attempt._id, testType, subjectName, chapterTitle,
-      totalQuestions: questions.length, medium, questions: safeQuestions,
+      totalQuestions: mcqQuestions.length, medium, 
+      questions: safeMcqs, // MCQ for interactive UI
+      subjectiveQuestions: safeSubjectives // Subjective for writing/upload
     });
   } catch (err) {
     console.error('startTest error:', err);
@@ -634,7 +662,7 @@ export async function submitAnswer(req, res) {
 export async function finishTest(req, res) {
   try {
     const { attemptId } = req.params;
-    const { subjectiveSubmissionId } = req.body; // 👈 NAYA: Frontend se subjective ID aayegi
+    const { subjectiveSubmissionId } = req.body;
 
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id });
 
@@ -677,7 +705,6 @@ export async function finishTest(req, res) {
     attempt.finishedAt = new Date();
     attempt.durationMs = attempt.finishedAt.getTime() - attempt.startedAt.getTime();
 
-    // 👇 NAYA LOGIC: Subjective Submission link aur combined score 👇
     if (subjectiveSubmissionId) {
       const sub = await SubjectiveSubmission.findById(subjectiveSubmissionId);
       if (sub) {
@@ -699,7 +726,6 @@ export async function finishTest(req, res) {
       obtainedMarks: combinedObtainedMarks,
       percentage: combinedPercentage
     };
-    // 👆 NAYA LOGIC KHATAM 👆
 
     let performanceLevel = 'Average';
     if (combinedPercentage >= 90) performanceLevel = 'Excellent';
@@ -772,7 +798,6 @@ export async function getResult(req, res) {
       };
     });
 
-    // 👇 NAYA: Subjective details nikalna result ke liye 👇
     let subjectiveDetails = null;
     if (attempt.subjectiveSubmissionId) {
       subjectiveDetails = await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean();
@@ -785,13 +810,13 @@ export async function getResult(req, res) {
         subjectName: attempt.subjectName, chapterNumber: attempt.chapterNumber, chapterTitle: attempt.chapterTitle,
         medium: attempt.medium, totalQuestions: attempt.totalQuestions, 
         score: attempt.score, 
-        subjectiveScore: attempt.subjectiveScore, // 👈 NAYA
-        combinedScore: attempt.combinedScore,     // 👈 NAYA
+        subjectiveScore: attempt.subjectiveScore, 
+        combinedScore: attempt.combinedScore,     
         aiAnalysis: attempt.aiAnalysis, aiAnalysisStatus: attempt.aiAnalysisStatus || 'completed',
         aiAnalysisEta: attempt.aiAnalysisEta || '', durationMs: attempt.durationMs,
         startedAt: attempt.startedAt, finishedAt: attempt.finishedAt, isHardMode: attempt.isHardMode,
         answers: detailedAnswers,
-        subjectiveDetails: subjectiveDetails // 👈 NAYA: Subjective evaluation ka pura data
+        subjectiveDetails: subjectiveDetails 
       },
     });
   } catch (err) {
@@ -1031,7 +1056,6 @@ export async function startPaperTest(req, res) {
     const paper = await getPaperForTest(paperId);
     if (!paper) return res.status(404).json({ error: 'Paper not found' });
 
-    // 👇 NAYA LOGIC: Questions ko MCQ aur Subjective mein divide karo 👇
     const mcqQuestions = paper.questions.filter(q => q.questionType !== 'subjective');
     const subjectiveQuestions = paper.questions.filter(q => q.questionType === 'subjective');
 
@@ -1039,13 +1063,13 @@ export async function startPaperTest(req, res) {
       userId: req.user._id, testType: 'full_paper', boardCode: paper.boardCode, classLevel: paper.classLevel,
       subjectCode: paper.subjectCode, subjectName: paper.subjectName, chapterNumber: null,
       chapterTitle: `${paper.paperCode} - ${paper.year} ${paper.examPhase}${paper.setCode ? ` Set ${paper.setCode}` : ''}`,
-      medium: paper.medium, questionIds: [], totalQuestions: mcqQuestions.length, status: 'in_progress', // TotalQuestions ab sirf MCQ count hai
+      medium: paper.medium, questionIds: [], totalQuestions: mcqQuestions.length, status: 'in_progress',
       startedAt: new Date(), isHardMode: !!isHardMode, paperId: paper.paperId, paperYear: paper.year,
       paperExamPhase: paper.examPhase, paperSetCode: paper.setCode,
     });
 
     const questionDocs = await Question.insertMany(
-      mcqQuestions.map((q) => ({ // Sirf MCQ insert kar rahe hain
+      mcqQuestions.map((q) => ({
         questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options,
         correctOption: q.correctOption, explanation: '', difficulty: q.difficulty, subtopic: q.subtopic,
         boardCode: paper.boardCode, classLevel: paper.classLevel, subjectCode: paper.subjectCode,
@@ -1072,8 +1096,8 @@ export async function startPaperTest(req, res) {
       chapterTitle: attempt.chapterTitle, totalQuestions: mcqQuestions.length, medium: paper.medium,
       paperCode: paper.paperCode, year: paper.year, examPhase: paper.examPhase, setCode: paper.setCode,
       sourceCreditText: paper.sourceCreditText, 
-      questions: safeQuestions, // MCQ Questions for the interactive UI
-      subjectiveQuestions: subjectiveQuestions.map(sq => ({ // Subjective Questions for display/upload
+      questions: safeQuestions,
+      subjectiveQuestions: subjectiveQuestions.map(sq => ({
         questionNumber: sq.questionNumber,
         questionText: sq.questionText,
         hindiQuestionText: sq.hindiQuestionText,

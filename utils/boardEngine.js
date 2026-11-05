@@ -163,29 +163,51 @@ export async function getChaptersForSubject({
   const normalizedMedium = normalizeMedium(medium);
   if (!normalizedMedium) throw new Error(`Unsupported medium: ${medium}`);
 
-  const query = {
+  const baseQuery = {
     classLevel: String(classLevel),
     subjectCode: String(subjectCode).toLowerCase().trim(),
     isActive: true,
   };
 
-  if (stream) query.stream = stream;
-
-  // First try board specific chapters
   const normalizedBoardCode = String(boardCode).toLowerCase().trim();
-  const boardChapters = await findChaptersForBoard({
+
+  // Build query WITH stream first, then fallback to WITHOUT stream (for common subjects like Hindi/English)
+  const queryWithStream = stream ? { ...baseQuery, stream } : baseQuery;
+  const queryNoStream = { ...baseQuery, stream: { $in: [null, undefined, ''] } };
+
+  // First try board-specific chapters with stream
+  let boardChapters = await findChaptersForBoard({
     boardCode: normalizedBoardCode,
-    query,
+    query: queryWithStream,
     medium: normalizedMedium,
   });
 
-  const fallbackChapters = normalizedBoardCode === 'ncert_default'
-    ? []
-    : await findChaptersForBoard({
-      boardCode: 'ncert_default',
-      query,
+  // If no chapters found with stream, try without stream (common subjects like hin/eng)
+  if (boardChapters.length === 0 && stream) {
+    boardChapters = await findChaptersForBoard({
+      boardCode: normalizedBoardCode,
+      query: queryNoStream,
       medium: normalizedMedium,
     });
+  }
+
+  // Fallback to ncert_default
+  let fallbackChapters = [];
+  if (normalizedBoardCode !== 'ncert_default') {
+    fallbackChapters = await findChaptersForBoard({
+      boardCode: 'ncert_default',
+      query: queryWithStream,
+      medium: normalizedMedium,
+    });
+    if (fallbackChapters.length === 0 && stream) {
+      fallbackChapters = await findChaptersForBoard({
+        boardCode: 'ncert_default',
+        query: queryNoStream,
+        medium: normalizedMedium,
+      });
+    }
+  }
+
   let chapters = preferredChapters([...boardChapters, ...fallbackChapters], normalizedMedium);
   const usedFallbackChapters = chapters.some(chapter => chapter.boardCode === 'ncert_default')
     && normalizedBoardCode !== 'ncert_default';

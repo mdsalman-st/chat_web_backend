@@ -32,9 +32,16 @@ export function normalizeMedium(value, { allowBoth = false } = {}) {
   return SUPPORTED_MEDIUMS.find((medium) => medium.toLowerCase() === normalized) || null;
 }
 
+/**
+ * Returns the chapter title appropriate for the user's chosen medium.
+ * - Hindi medium → show hindiTitle (fallback to title)
+ * - English or any other medium → show title (fallback to hindiTitle if title looks Hindi)
+ */
 export function chapterTitleForMedium(chapter, medium) {
-  if (medium === 'Hindi' && (!chapter.medium || chapter.medium === 'Both') && chapter.hindiTitle) {
-    return chapter.hindiTitle;
+  if (medium === 'Hindi') {
+    // Hindi medium: prefer hindiTitle, fallback to title
+    return chapter.hindiTitle || chapter.title;
   }
-  return chapter.title;
+  // English or other medium: prefer title, fallback to hindiTitle
+  return chapter.title || chapter.hindiTitle;
 }

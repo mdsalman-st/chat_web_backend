@@ -447,6 +447,35 @@ const SEED_CHAPTERS = [
   { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 2, title: 'Theory of Consumer Behaviour', hindiTitle: 'उपभोक्ता व्यवहार का सिद्धांत', phaseCutoff: 'quarterly', isLive: true },
   { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 3, title: 'Production and Costs', hindiTitle: 'उत्पादन और लागत', phaseCutoff: 'half_yearly', isLive: true },
   { boardCode: 'bseb', classLevel: '12', subjectCode: 'eco', stream: 'commerce', chapterNumber: 4, title: 'Forms of Market and Price Determination', hindiTitle: 'बाजार के रूप और मूल्य निर्धारण', phaseCutoff: 'annual', isLive: true },
+
+  // --- BSEB Class 12 Hindi 100 Marks (common across all streams) ---
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 1, title: 'Batchit (बातचीत)', hindiTitle: 'बातचीत', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 2, title: 'Usne Kaha Tha (उसने कहा था)', hindiTitle: 'उसने कहा था', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 3, title: 'Sampurn Kranti (सम्पूर्ण क्रांति)', hindiTitle: 'सम्पूर्ण क्रांति', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 4, title: 'Ardh Narishwar (अर्धनारीश्वर)', hindiTitle: 'अर्धनारीश्वर', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 5, title: 'Roj (रोज)', hindiTitle: 'रोज', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 6, title: 'O Sadanira (ओ सदानीरा)', hindiTitle: 'ओ सदानीरा', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 7, title: 'Sipahi Ki Maa (सिपाही की माँ)', hindiTitle: 'सिपाही की माँ', phaseCutoff: 'annual', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 8, title: 'Prageet Aur Samaj (प्रगीत और समाज)', hindiTitle: 'प्रगीत और समाज', phaseCutoff: 'annual', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 9, title: 'Kadbak (कड़बक)', hindiTitle: 'कड़बक', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 10, title: 'Surdas Ke Pad (सूरदास के पद)', hindiTitle: 'सूरदास के पद', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 11, title: 'Tulsidas Ke Pad (तुलसीदास के पद)', hindiTitle: 'तुलसीदास के पद', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 12, title: 'Chhappay (छप्पय)', hindiTitle: 'छप्पय', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'hin', chapterNumber: 13, title: 'Gaon Ka Ghar (गाँव का घर)', hindiTitle: 'गाँव का घर', phaseCutoff: 'annual', isLive: true },
+
+  // --- BSEB Class 12 English 100 Marks (common across all streams) ---
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 1, title: 'Indian Civilization and Culture', hindiTitle: 'भारतीय सभ्यता और संस्कृति', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 2, title: 'Bharat Is My Home', hindiTitle: 'भारत मेरा घर है', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 3, title: 'A Pinch of Snuff', hindiTitle: 'चुटकी भर नसवार', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 4, title: 'I Have a Dream', hindiTitle: 'मेरा एक सपना है', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 5, title: 'Ideas That Have Helped Mankind', hindiTitle: 'विचार जिन्होंने मानवता की मदद की', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 6, title: 'The Artist', hindiTitle: 'कलाकार', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 7, title: 'Sweetest Love I Do Not Goe', hindiTitle: 'प्रिय प्रेम मैं नहीं जाता', phaseCutoff: 'quarterly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 8, title: 'Song of Myself', hindiTitle: 'मेरा गीत', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 9, title: 'Now the Leaves Are Falling Fast', hindiTitle: 'अब पत्ते तेज़ी से गिर रहे हैं', phaseCutoff: 'half_yearly', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 10, title: 'Ode to Autumn', hindiTitle: 'शरद ऋतु पर ओड', phaseCutoff: 'annual', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 11, title: 'An Epitaph', hindiTitle: 'एक समाधि लेख', phaseCutoff: 'annual', isLive: true },
+  { boardCode: 'bseb', classLevel: '12', subjectCode: 'eng', chapterNumber: 12, title: 'Fire Hymn', hindiTitle: 'अग्नि स्तुति', phaseCutoff: 'annual', isLive: true },
 ];
 
 export async function seedBoardConfigs() {
