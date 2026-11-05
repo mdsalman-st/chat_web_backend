@@ -32,8 +32,8 @@ async function recordKeyUsage(keyId, isRateLimit = false, isError = false) {
   }
 }
 
-// 🚨 Timeout 45 seconds (taaki heavy questions generate ho sakein)
-const TIMEOUT_MS = 45000; 
+// 🚨 Timeout 60 seconds (taaki heavy questions generate ho sakein)
+const TIMEOUT_MS = 60000; 
 
 async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
