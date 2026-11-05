@@ -8,7 +8,6 @@ import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
 /**
  * Question Generator & Dual-Model Verification Service
- * Generates syllabus-locked questions and verifies them with an independent AI solver.
  */
 
 export async function queueOrGetChapterJob({
@@ -96,12 +95,14 @@ async function runGenerationAndVerification(job) {
 
   const boardConfig = await getResolvedBoardConfig(boardCode);
   
-  // 1. Board Config se Pattern nikaalo
-  const pattern = boardConfig.paperPattern || { mcq: 50, twoMarks: 20, fiveMarks: 10 };
-  const reqMcq = pattern.mcq || 0;
-  const reqTwoMarks = pattern.twoMarks || 0;
-  const reqFiveMarks = pattern.fiveMarks || 0;
-  const totalRequired = reqMcq + reqTwoMarks + reqFiveMarks;
+  // 🚨 FIX: Agar pattern 0 hai toh default value use karo
+  const pattern = boardConfig.paperPattern || {};
+  const reqMcq = (pattern.mcq > 0) ? pattern.mcq : 50;
+  const reqTwoMarks = (pattern.twoMarks > 0) ? pattern.twoMarks : 20;
+  const reqFiveMarks = (pattern.fiveMarks > 0) ? pattern.fiveMarks : 10;
+  
+  const reqSubj = reqTwoMarks + reqFiveMarks;
+  const totalRequired = reqMcq + reqSubj;
 
   const chapter = await getChapterForMedium({
     boardCode, classLevel, subjectCode, chapterNumber, medium,
@@ -133,7 +134,7 @@ async function runGenerationAndVerification(job) {
     }
   } catch (err) {}
 
-  // 3. Existing Questions count karo taaki duplicate na ho
+  // 3. Existing Questions count karo
   let existingMcqs = await Question.countDocuments({ boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium, type: 'mcq', status: 'verified' });
   let existingSubjs = await Question.countDocuments({ boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium, type: 'subjective', status: 'verified' });
   
@@ -146,11 +147,10 @@ async function runGenerationAndVerification(job) {
     loopCount++;
     
     const neededMcq = Math.max(0, reqMcq - existingMcqs);
-    const neededSubjTotal = Math.max(0, (reqTwoMarks + reqFiveMarks) - existingSubjs);
+    const neededSubjTotal = Math.max(0, reqSubj - existingSubjs);
     
     if (neededMcq === 0 && neededSubjTotal === 0) break;
 
-    // Ek batch mein max 5 questions (taaki AI ka token limit na toote)
     let batchMcq = Math.min(5, neededMcq);
     let batchSubj = Math.min(5, neededSubjTotal);
     
@@ -216,11 +216,9 @@ Return EXACT JSON format:
         continue;
       }
 
-      // Verification Loop for the batch
       for (const candidate of candidates) {
         if (candidate.type === 'mcq') {
           try {
-            // Dual-model verification for MCQs
             const solverPrompt = `Solve this MCQ:\nQ: ${candidate.questionText}\nOptions:\n${candidate.options.map(o => `${o.key}) ${o.text}`).join('\n')}\nReturn JSON: { "selectedOption": "A" | "B" | "C" | "D" }`;
             const solverRes = await executeAiJsonWithFailover({
               prompt: solverPrompt,
@@ -244,7 +242,6 @@ Return EXACT JSON format:
             console.warn(`MCQ Verification failed: ${vErr.message}`); 
           }
         } else if (candidate.type === 'subjective') {
-          // Subjectives ko bina verification ke save karo
           await Question.findOneAndUpdate(
             { boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), questionText: candidate.questionText.trim(), medium },
             { $set: { hindiQuestionText: candidate.hindiQuestionText, modelAnswer: candidate.modelAnswer || '', difficulty: candidate.difficulty || 'Medium', subtopic: candidate.subtopic || '', chapterTitle, type: 'subjective', marks: candidate.marks || 2, isAiGenerated: true, sourceLabel: 'AI-generated', status: 'verified', isActive: true } },
@@ -262,11 +259,9 @@ Return EXACT JSON format:
       }
     }
     
-    // Rate limit se bachne ke liye 2 second ka gap
     await new Promise(r => setTimeout(r, 2000));
   }
 
-  // 5. Chapter question counters update karo
   const totalVerifiedInDb = await Question.countDocuments({
     boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium, isActive: true, status: 'verified',
   });
@@ -275,11 +270,7 @@ Return EXACT JSON format:
     await Chapter.updateOne({ _id: chapter._id }, { $set: { questionCount: totalVerifiedInDb, verifiedQuestionCount: totalVerifiedInDb, isLive: totalVerifiedInDb > 0 } });
   }
 
-  // 6. Mark job completed
   await GenerationJob.findByIdAndUpdate(job._id, {
     $set: { status: 'completed', progressPercent: 100, progressMessage: `Ready! ${totalVerifiedInDb} questions generated as per pattern.`, verifiedCount: totalVerifiedInDb, completedAt: new Date() },
   });
-
-  console.log(`✅ [AI Gen] Job ${job.jobKey} finished. Verified: ${totalVerifiedInDb}`);
-  return { verifiedCount: totalVerifiedInDb, totalVerifiedInDb };
 }
