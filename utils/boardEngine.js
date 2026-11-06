@@ -1,6 +1,7 @@
 import BoardConfig from '../models/BoardConfig.js';
 import Chapter from '../models/Chapter.js';
 import { normalizeMedium } from './medium.js';
+import { withResolvedSubjectiveAttemptLimits } from '../config/boardSubjectiveAttemptLimits.js';
 
 /**
  * Board Engine — The core dynamic engine for Nexus Test Module.
@@ -23,11 +24,11 @@ export async function getResolvedBoardConfig(boardCode) {
   }
 
   if (config) {
-    return {
+    return withResolvedSubjectiveAttemptLimits({
       ...config,
       isUsingFallback: false,
       fallbackNotice: null,
-    };
+    });
   }
 
   // Fallback to NCERT default pattern
@@ -38,11 +39,11 @@ export async function getResolvedBoardConfig(boardCode) {
     throw new Error('Default NCERT board configuration is missing. Please run database seeders.');
   }
 
-  return {
+  return withResolvedSubjectiveAttemptLimits({
     ...fallback,
     isUsingFallback: true,
     fallbackNotice: 'Using default NCERT curriculum pattern (custom board configuration not found).',
-  };
+  });
 }
 
 /**

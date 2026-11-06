@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import BoardConfig from '../models/BoardConfig.js';
 import Chapter from '../models/Chapter.js';
 import { SUPPORTED_MEDIUMS } from '../utils/medium.js';
+import { BOARD_SUBJECTIVE_ATTEMPT_LIMITS } from '../config/boardSubjectiveAttemptLimits.js';
 
 dotenv.config();
 
@@ -27,7 +28,8 @@ const BOARDS_DATA = [
     ],
     paperPattern: {
       mcqCount: 40, attemptLimit: 40, marksPerMcq: 1, durationMinutes: 90, negativeMarking: 0, optionsCount: 4,
-      hasShortAnswer: true, shortCount: 10, shortMarks: 2, hasLongAnswer: true, longCount: 4, longMarks: 5, totalMarks: 80,
+      hasShortAnswer: true, shortCount: 10, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.ncert_default.shortAttemptLimit, shortMarks: 2,
+      hasLongAnswer: true, longCount: 4, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.ncert_default.longAttemptLimit, longMarks: 5, totalMarks: 80,
     },
     classes: [
       {
@@ -157,8 +159,8 @@ const BOARDS_DATA = [
     ],
     paperPattern: {
       mcqCount: 100, attemptLimit: 50, marksPerMcq: 1, durationMinutes: 195, negativeMarking: 0, optionsCount: 4,
-      hasShortAnswer: true, shortCount: 30, shortAttemptLimit: 15, shortMarks: 2,
-      hasLongAnswer: true, longCount: 8, longAttemptLimit: 4, longMarks: 5, totalMarks: 100,
+      hasShortAnswer: true, shortCount: 30, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.bseb.shortAttemptLimit, shortMarks: 2,
+      hasLongAnswer: true, longCount: 8, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.bseb.longAttemptLimit, longMarks: 5, totalMarks: 100,
     },
     classes: [
       {
@@ -239,7 +241,8 @@ const BOARDS_DATA = [
     ],
     paperPattern: {
       mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 180, negativeMarking: 0, optionsCount: 4,
-      hasShortAnswer: true, shortCount: 15, shortMarks: 2, hasLongAnswer: true, longCount: 6, longMarks: 5, totalMarks: 80,
+      hasShortAnswer: true, shortCount: 15, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.cbse.shortAttemptLimit, shortMarks: 2,
+      hasLongAnswer: true, longCount: 6, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.cbse.longAttemptLimit, longMarks: 5, totalMarks: 80,
     },
     classes: [
       {
@@ -315,7 +318,8 @@ const BOARDS_DATA = [
     ],
     paperPattern: {
       mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 195, negativeMarking: 0, optionsCount: 4,
-      hasShortAnswer: true, shortCount: 10, shortMarks: 2, hasLongAnswer: true, longCount: 5, longMarks: 6, totalMarks: 70,
+      hasShortAnswer: true, shortCount: 10, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.up_board.shortAttemptLimit, shortMarks: 2,
+      hasLongAnswer: true, longCount: 5, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.up_board.longAttemptLimit, longMarks: 6, totalMarks: 70,
     },
     classes: [
       {
