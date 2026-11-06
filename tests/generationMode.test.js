@@ -5,6 +5,7 @@ import TestAttempt from '../models/TestAttempt.js';
 import {
   buildChapterJobKey,
   getAutomaticGenerationRetryAt,
+  getNextGenerationBatch,
   recoverFailedActiveAttemptJobs,
 } from '../services/questionGenerator.js';
 
@@ -47,6 +48,25 @@ test('generation retries indefinitely with exponential backoff capped at five mi
   assert.equal(getAutomaticGenerationRetryAt(3, now).getTime(), now + 240_000);
   assert.equal(getAutomaticGenerationRetryAt(4, now).getTime(), now + 300_000);
   assert.equal(getAutomaticGenerationRetryAt(100, now).getTime(), now + 300_000);
+});
+
+test('generation schedules one bounded batch at a time, prioritizing exam MCQs', () => {
+  assert.deepEqual(
+    getNextGenerationBatch({ mcq: 0, short: 0, long: 0 }, { mcq: 100, short: 30, long: 8 }),
+    { stage: 'mcq', batchSize: 3 },
+  );
+  assert.deepEqual(
+    getNextGenerationBatch({ mcq: 99, short: 0, long: 0 }, { mcq: 100, short: 30, long: 8 }),
+    { stage: 'mcq', batchSize: 1 },
+  );
+  assert.deepEqual(
+    getNextGenerationBatch({ mcq: 100, short: 0, long: 0 }, { mcq: 100, short: 30, long: 8 }),
+    { stage: 'short', batchSize: 2 },
+  );
+  assert.equal(
+    getNextGenerationBatch({ mcq: 100, short: 30, long: 8 }, { mcq: 100, short: 30, long: 8 }),
+    null,
+  );
 });
 
 test('failed jobs for active attempts are automatically returned to the queue', async () => {

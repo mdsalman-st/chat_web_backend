@@ -50,6 +50,7 @@ const generationJobSchema = new mongoose.Schema(
     longMarks: { type: Number, default: 5 },
     workerLeaseUntil: { type: Date, default: null, index: true },
     automaticRetryCount: { type: Number, default: 0 },
+    emptyBatchCount: { type: Number, default: 0 },
     nextRetryAt: { type: Date, default: null, index: true },
     error: { type: String, default: null },
     startedAt: { type: Date, default: null },
@@ -60,7 +61,7 @@ const generationJobSchema = new mongoose.Schema(
   }
 );
 
-generationJobSchema.index({ status: 1, createdAt: -1 });
+generationJobSchema.index({ status: 1, updatedAt: 1, createdAt: 1 });
 
 const GenerationJob = mongoose.model('GenerationJob', generationJobSchema);
 

@@ -705,6 +705,7 @@ export async function retryAttemptGeneration(req, res) {
             progressMessage: 'Retry queued. Existing questions and answers will be preserved.',
             workerLeaseUntil: null,
             automaticRetryCount: 0,
+            emptyBatchCount: 0,
             nextRetryAt: null,
             error: null,
             startedAt: null,

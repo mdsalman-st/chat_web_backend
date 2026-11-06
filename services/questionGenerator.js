@@ -27,6 +27,18 @@ export function getAutomaticGenerationRetryAt(retryCount, now = Date.now()) {
   return new Date(now + delayMs);
 }
 
+export function getNextGenerationBatch(counts, targets) {
+  for (const stage of ['mcq', 'short', 'long']) {
+    if (counts[stage] >= targets[stage]) continue;
+    const batchLimit = stage === 'mcq' ? BATCH_SIZE : SUBJECTIVE_BATCH_SIZE;
+    return {
+      stage,
+      batchSize: Math.min(batchLimit, targets[stage] - counts[stage]),
+    };
+  }
+  return null;
+}
+
 function jobScope(job) {
   return {
     boardCode: job.boardCode.toLowerCase(),
@@ -156,6 +168,7 @@ export async function queueOrGetChapterJob({
         longMarks: Number(longMarks) || 5,
         workerLeaseUntil: null,
         automaticRetryCount: 0,
+        emptyBatchCount: 0,
         nextRetryAt: null,
         startedAt: null,
         completedAt: null,
@@ -191,6 +204,7 @@ export async function recoverFailedActiveAttemptJobs() {
         status: 'queued',
         nextRetryAt: null,
         workerLeaseUntil: null,
+        emptyBatchCount: 0,
         error: null,
         progressMessage: 'Automatically resuming question generation for your active exam. Existing questions are preserved.',
       },
@@ -220,7 +234,7 @@ async function runWorker() {
       }, {
         $set: { status: 'running', workerLeaseUntil: new Date(now.getTime() + LEASE_MS) },
         }, {
-        sort: { createdAt: 1 },
+        sort: { updatedAt: 1, createdAt: 1 },
         new: true,
       });
       if (!job) break;
@@ -248,6 +262,7 @@ async function runWorker() {
           $set: {
             status: 'queued',
             automaticRetryCount: nextRetryCount,
+            emptyBatchCount: 0,
             nextRetryAt,
             error: errorMessage,
             progressMessage: `Question generation is temporarily unavailable. Automatically retrying in ${Math.ceil((nextRetryAt.getTime() - Date.now()) / 1000)} seconds. Existing questions are preserved.`,
@@ -360,49 +375,27 @@ Return strict JSON: { "questions": [ ${schema} ] }`;
   return inserted;
 }
 
-async function updateJobProgress(job, stage, counts, targets) {
+async function updateJobProgress(job, stage, counts, targets, emptyBatchCount) {
   const stageTarget = targets[stage];
   const stageCount = counts[stage];
   await GenerationJob.updateOne({ _id: job._id }, {
     $set: {
+      status: 'queued',
       generationStage: stage,
       verifiedCount: counts.mcq,
       verifiedShortCount: counts.short,
       verifiedLongCount: counts.long,
       progressPercent: progressPercent(counts, targets),
       progressMessage: `Generating ${stage} questions (${Math.min(stageCount, stageTarget)}/${stageTarget})…`,
-      workerLeaseUntil: new Date(Date.now() + LEASE_MS),
+      workerLeaseUntil: null,
       automaticRetryCount: 0,
+      emptyBatchCount,
       nextRetryAt: null,
     },
   });
   job.automaticRetryCount = 0;
+  job.emptyBatchCount = emptyBatchCount;
   job.nextRetryAt = null;
-}
-
-async function generateStage(job, stage, scope, chapterTitle, boardName, counts, targets) {
-  let emptyBatches = 0;
-  const batchSizeLimit = stage === 'mcq' ? BATCH_SIZE : SUBJECTIVE_BATCH_SIZE;
-  while (counts[stage] < targets[stage]) {
-    const inserted = await generateBatch({
-      job,
-      stage,
-      batchSize: Math.min(batchSizeLimit, targets[stage] - counts[stage]),
-      chapterTitle,
-      boardName,
-      scope,
-    });
-    if (!inserted) {
-      emptyBatches++;
-      if (emptyBatches >= MAX_EMPTY_BATCHES) {
-        throw new Error(`Could not create distinct, valid ${stage} questions after ${MAX_EMPTY_BATCHES} AI batches.`);
-      }
-    } else {
-      emptyBatches = 0;
-      counts[stage] = await countQuestions(scope, stage);
-    }
-    await updateJobProgress(job, stage, counts, targets);
-  }
 }
 
 async function runGenerationAndVerification(job) {
@@ -430,9 +423,23 @@ async function runGenerationAndVerification(job) {
     long: await countQuestions(scope, 'long'),
   };
 
-  for (const stage of ['mcq', 'short', 'long']) {
-    if (targets[stage] === 0 || counts[stage] >= targets[stage]) continue;
-    await generateStage(job, stage, scope, chapterTitle, boardConfig.name, counts, targets);
+  const nextBatch = getNextGenerationBatch(counts, targets);
+  if (nextBatch) {
+    const inserted = await generateBatch({
+      job,
+      stage: nextBatch.stage,
+      batchSize: nextBatch.batchSize,
+      chapterTitle,
+      boardName: boardConfig.name,
+      scope,
+    });
+    counts[nextBatch.stage] = await countQuestions(scope, nextBatch.stage);
+    const emptyBatchCount = inserted ? 0 : (Number(job.emptyBatchCount) || 0) + 1;
+    if (emptyBatchCount >= MAX_EMPTY_BATCHES) {
+      throw new Error(`Could not create distinct, valid ${nextBatch.stage} questions after ${MAX_EMPTY_BATCHES} AI batches.`);
+    }
+    await updateJobProgress(job, nextBatch.stage, counts, targets, emptyBatchCount);
+    return;
   }
 
   const finalCount = counts.mcq + counts.short + counts.long;
@@ -455,6 +462,7 @@ async function runGenerationAndVerification(job) {
       verifiedShortCount: counts.short,
       verifiedLongCount: counts.long,
       workerLeaseUntil: null,
+      emptyBatchCount: 0,
       completedAt: new Date(),
     },
   });
