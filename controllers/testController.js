@@ -432,6 +432,7 @@ export async function getGenerationJobStatus(req, res) {
     const job = await GenerationJob.findById(jobId).lean();
     if (!job) return res.status(404).json({ error: 'Generation job not found' });
 
+    res.set('Cache-Control', 'no-store');
     res.json({
       success: true, job: {
         id: job._id, status: job.status, progressPercent: job.progressPercent,
