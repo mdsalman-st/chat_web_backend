@@ -1,5 +1,6 @@
 import SubjectiveSubmission from '../models/SubjectiveSubmission.js';
 import OfficialPaper from '../models/OfficialPaper.js';
+import TestAttempt from '../models/TestAttempt.js';
 import Notification from '../models/Notification.js';
 import { executeGeminiVisionWithFailover, executeAiJsonWithFailover } from '../utils/aiClient.js';
 
@@ -7,6 +8,177 @@ import { executeGeminiVisionWithFailover, executeAiJsonWithFailover } from '../u
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
+
+const EVALUATION_LEASE_MS = 5 * 60 * 1000;
+const EVALUATION_HEARTBEAT_MS = 30 * 1000;
+let evaluationWorkerScheduled = false;
+let evaluationWorkerRunning = false;
+let evaluationRecoveryTimer = null;
+
+function scheduleEvaluationWorker() {
+  if (evaluationWorkerScheduled || evaluationWorkerRunning) return;
+  evaluationWorkerScheduled = true;
+  setImmediate(() => {
+    evaluationWorkerScheduled = false;
+    runEvaluationWorker().catch((error) => console.error('[SubjectiveEvaluation] Worker error:', error));
+  });
+}
+
+async function runEvaluationWorker() {
+  if (evaluationWorkerRunning) return;
+  evaluationWorkerRunning = true;
+  try {
+    while (true) {
+      const now = new Date();
+      const submission = await SubjectiveSubmission.findOneAndUpdate({
+        status: { $in: ['uploading', 'ocr_processing', 'evaluating'] },
+        $or: [
+          { evaluationLeaseUntil: null },
+          { evaluationLeaseUntil: { $lte: now } },
+        ],
+      }, {
+        $set: {
+          status: 'ocr_processing',
+          evaluationLeaseUntil: new Date(now.getTime() + EVALUATION_LEASE_MS),
+        },
+      }, {
+        sort: { createdAt: 1 },
+        new: true,
+      });
+      if (!submission) break;
+
+      const heartbeat = setInterval(() => {
+        SubjectiveSubmission.updateOne({
+          _id: submission._id,
+          status: { $in: ['ocr_processing', 'evaluating'] },
+        }, {
+          $set: { evaluationLeaseUntil: new Date(Date.now() + EVALUATION_LEASE_MS) },
+        }).catch((error) => console.error('[SubjectiveEvaluation] Lease renewal failed:', error));
+      }, EVALUATION_HEARTBEAT_MS);
+      heartbeat.unref?.();
+
+      try {
+        await evaluateSubmission(submission._id);
+      } catch (error) {
+        console.error(`[SubjectiveEvaluation] Submission ${submission._id} failed:`, error);
+        await SubjectiveSubmission.updateOne({ _id: submission._id }, {
+          $set: {
+            status: 'failed',
+            errorMessage: error.message,
+            evaluationLeaseUntil: null,
+          },
+        });
+      } finally {
+        clearInterval(heartbeat);
+      }
+    }
+  } finally {
+    evaluationWorkerRunning = false;
+  }
+}
+
+export function startSubjectiveEvaluationWorker() {
+  if (evaluationRecoveryTimer) return;
+  scheduleEvaluationWorker();
+  evaluationRecoveryTimer = setInterval(scheduleEvaluationWorker, 10 * 1000);
+  evaluationRecoveryTimer.unref?.();
+}
+
+function normalizeQuestionNumber(value) {
+  const normalized = String(value)
+    .replace(/[०-९]/g, (digit) => String('०१२३४५६७८९'.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)));
+  const questionNumber = Number(normalized);
+  return Number.isInteger(questionNumber) && questionNumber > 0 ? questionNumber : null;
+}
+
+function detectQuestionNumbers(text, reportedNumbers = []) {
+  const found = [];
+  const seen = new Set();
+  const addNumber = (value) => {
+    const number = normalizeQuestionNumber(value);
+    if (number && !seen.has(number)) {
+      seen.add(number);
+      found.push(number);
+    }
+  };
+  const markerPattern = /(?:\b(?:Q(?:uestion)?|Ans(?:wer)?)\s*\.?\s*|प्रश्न\s*|प्र\.\s*)[:#.)-]?\s*([0-9०-९٠-٩]{1,3})/giu;
+  for (const match of String(text || '').matchAll(markerPattern)) addNumber(match[1]);
+  for (const number of reportedNumbers) addNumber(number);
+  return found;
+}
+
+function getSectionLimit(questions, configuredCount, configuredLimit) {
+  const count = Number(configuredCount) > 0
+    ? Math.min(questions.length, Number(configuredCount))
+    : questions.length;
+  return Number(configuredLimit) > 0 ? Math.min(count, Number(configuredLimit)) : count;
+}
+
+function getSectionMaxMarks(questions, count, limit, configuredMarks) {
+  const includedCount = Math.min(questions.length, count, limit);
+  if (!includedCount) return 0;
+  if (Number(configuredMarks) > 0) return includedCount * Number(configuredMarks);
+  return questions.slice(0, includedCount).reduce((total, question) => total + Number(question.maxMarks || 0), 0);
+}
+
+export function selectSubjectiveQuestionsByAnswerOrder(targetQuestions, pages, pattern = {}) {
+  const targetByNumber = new Map(targetQuestions.map((question) => [Number(question.questionNumber), question]));
+  const detectedOrder = [];
+  const detectedSet = new Set();
+  for (const page of pages) {
+    const pageNumbers = detectQuestionNumbers(page.ocrText, page.detectedQuestions);
+    for (const questionNumber of pageNumbers) {
+      if (targetByNumber.has(questionNumber) && !detectedSet.has(questionNumber)) {
+        detectedSet.add(questionNumber);
+        detectedOrder.push(questionNumber);
+      }
+    }
+  }
+
+  const shortQuestions = targetQuestions.filter((question) => question.questionType === 'short');
+  const longQuestions = targetQuestions.filter((question) => question.questionType === 'long');
+  const otherQuestions = targetQuestions.filter((question) => !['short', 'long'].includes(question.questionType));
+  const shortLimit = getSectionLimit(shortQuestions, pattern.shortCount, pattern.shortAttemptLimit);
+  const longLimit = getSectionLimit(longQuestions, pattern.longCount, pattern.longAttemptLimit);
+  const selectedQuestionNumbers = new Set();
+  let shortSelected = 0;
+  let longSelected = 0;
+  for (const questionNumber of detectedOrder) {
+    const question = targetByNumber.get(questionNumber);
+    if (question.questionType === 'short') {
+      if (shortSelected < shortLimit) {
+        selectedQuestionNumbers.add(questionNumber);
+        shortSelected++;
+      }
+    } else if (question.questionType === 'long') {
+      if (longSelected < longLimit) {
+        selectedQuestionNumbers.add(questionNumber);
+        longSelected++;
+      }
+    } else {
+      selectedQuestionNumbers.add(questionNumber);
+    }
+  }
+
+  return {
+    detectedOrder,
+    questionsToEvaluate: targetQuestions.filter((question) =>
+      selectedQuestionNumbers.has(Number(question.questionNumber)),
+    ),
+    totalMaxMarks: getSectionMaxMarks(
+      shortQuestions,
+      Number(pattern.shortCount) || shortQuestions.length,
+      shortLimit,
+      pattern.shortMarks,
+    ) + getSectionMaxMarks(
+      longQuestions,
+      Number(pattern.longCount) || longQuestions.length,
+      longLimit,
+      pattern.longMarks,
+    ) + otherQuestions.reduce((total, question) => total + Number(question.maxMarks || 0), 0),
+  };
+}
 
 /**
  * Phase 6: Handwriting OCR & Rubric-based Subjective Evaluator Service
@@ -40,11 +212,14 @@ export async function processPageOCR(submissionId, pageNumber) {
         
         if (pdfBuffer) {
           const pdfData = await pdfParse(pdfBuffer);
-          page.ocrText = pdfData.text || '';
-          page.ocrConfidence = 99;
-          page.processingStatus = 'completed';
-          await submission.save();
-          return page.ocrText;
+          if (pdfData.text?.trim()) {
+            page.ocrText = pdfData.text;
+            page.ocrConfidence = 99;
+            page.detectedQuestions = detectQuestionNumbers(page.ocrText);
+            page.processingStatus = 'completed';
+            await submission.save();
+            return page.ocrText;
+          }
         }
       } catch (pdfErr) {
         console.error("PDF Parse Error:", pdfErr);
@@ -87,7 +262,10 @@ Return STRICT JSON matching this schema:
 
     page.ocrText = result.extractedText || '';
     page.ocrConfidence = typeof result.confidence === 'number' ? result.confidence : 85;
-    page.detectedQuestions = Array.isArray(result.detectedQuestions) ? result.detectedQuestions : [];
+    page.detectedQuestions = detectQuestionNumbers(
+      page.ocrText,
+      Array.isArray(result.detectedQuestions) ? result.detectedQuestions : [],
+    );
     page.processingStatus = 'completed';
 
     await submission.save();
@@ -108,6 +286,9 @@ export async function evaluateSubmission(submissionId) {
   }
 
   submission.status = 'ocr_processing';
+  submission.pages.forEach((page) => {
+    if (page.processingStatus === 'processing') page.processingStatus = 'pending';
+  });
   await submission.save();
 
   for (const page of submission.pages) {
@@ -117,6 +298,9 @@ export async function evaluateSubmission(submissionId) {
   }
 
   const updatedSubmission = await SubjectiveSubmission.findById(submissionId);
+  if (updatedSubmission.pages.some((page) => page.processingStatus === 'failed')) {
+    throw new Error('One or more answer-sheet files could not be read. Please upload clearer pages and retry.');
+  }
   updatedSubmission.status = 'evaluating';
 
   const combinedTranscript = updatedSubmission.pages
@@ -127,85 +311,68 @@ export async function evaluateSubmission(submissionId) {
   updatedSubmission.combinedTranscript = combinedTranscript;
   await updatedSubmission.save();
 
-  let targetQuestions = [];
-  if (updatedSubmission.paperId) {
+  let targetQuestions = (updatedSubmission.expectedQuestions || []).map((question) => ({
+    questionNumber: question.questionNumber,
+    questionType: question.questionType || 'subjective',
+    questionText: question.questionText,
+    hindiQuestionText: question.hindiQuestionText || question.questionText,
+    maxMarks: question.maxMarks,
+    modelAnswer: question.modelAnswer,
+  }));
+  if (!targetQuestions.length && updatedSubmission.paperId) {
     const paper = await OfficialPaper.findById(updatedSubmission.paperId).lean();
     if (paper && paper.questions && paper.questions.length > 0) {
-      targetQuestions = paper.questions.slice(0, 5).map((q, idx) => ({
+      targetQuestions = paper.questions.filter((q) => q.questionType === 'subjective').map((q, idx) => ({
         questionNumber: q.questionNumber || idx + 1,
+        questionType: 'subjective',
         questionText: q.questionText,
         hindiQuestionText: q.hindiQuestionText || q.questionText,
         maxMarks: q.marks || 5,
-        modelAnswer: q.options?.find((o) => o.key === q.correctOption)?.text || 'Official standard answer and key principles.',
+        modelAnswer: q.hindiModelAnswer || q.modelAnswer || '',
       }));
     }
   }
 
-  if (targetQuestions.length === 0) {
-    const subjectName = updatedSubmission.subjectName || updatedSubmission.subjectCode || 'General';
-    
-    if (!combinedTranscript || combinedTranscript.trim().length < 10) {
-       updatedSubmission.status = 'completed';
-       updatedSubmission.totalMarks = 0;
-       updatedSubmission.obtainedMarks = 0;
-       updatedSubmission.percentage = 0;
-       updatedSubmission.overallFeedback = 'No readable answer found in the uploaded sheet. Please write your answers clearly.';
-       updatedSubmission.evaluations = [];
-       await updatedSubmission.save();
-       return updatedSubmission;
-    }
+  if (!combinedTranscript.trim()) {
+    throw new Error('No readable handwriting was found in the uploaded answer sheet.');
+  }
+  if (!targetQuestions.length || targetQuestions.some((question) => !question.modelAnswer?.trim())) {
+    updatedSubmission.status = 'review_required';
+    updatedSubmission.errorMessage = 'Exact subjective questions and official model answers are required before AI evaluation.';
+    updatedSubmission.evaluationLeaseUntil = null;
+    await updatedSubmission.save();
+    return updatedSubmission;
+  }
+  if (targetQuestions.some((question) => !Number.isFinite(Number(question.maxMarks)) || Number(question.maxMarks) <= 0)) {
+    updatedSubmission.status = 'review_required';
+    updatedSubmission.errorMessage = 'Valid maximum marks are required for every subjective question before evaluation.';
+    updatedSubmission.evaluationLeaseUntil = null;
+    await updatedSubmission.save();
+    return updatedSubmission;
+  }
 
-    const extractQuestionsPrompt = `You are an expert ${subjectName} examiner.
-The student has written answers for a subjective test but we don't have the exact question paper.
-Read the following student transcript and infer what the questions might have been based on their answers.
-
-Transcript:
-"""
-${combinedTranscript}
-"""
-
-Return JSON:
-{
-  "questions": [
-    {
-      "questionNumber": 1,
-      "questionText": "Inferred question in English",
-      "hindiQuestionText": "Inferred question in Hindi",
-      "maxMarks": 5,
-      "modelAnswer": "Standard ideal answer for this question"
-    }
-  ]
-}`;
-
-    try {
-      const genRes = await executeAiJsonWithFailover({
-        prompt: extractQuestionsPrompt,
-        systemInstruction: 'You are a strict examiner inferring subjective questions from student answers.',
-        taskType: 'heavy',
-      });
-      targetQuestions = genRes.result?.questions || [];
-    } catch (e) {
-      console.error("Failed to infer questions from transcript", e);
-    }
-
-    if (targetQuestions.length === 0) {
-      targetQuestions = [{
-        questionNumber: 1,
-        questionText: `General Assessment for ${subjectName}`,
-        hindiQuestionText: `${subjectName} के लिए सामान्य मूल्यांकन`,
-        maxMarks: 10,
-        modelAnswer: 'Evaluated based on general board standards for this subject.'
-      }];
-    }
+  const pattern = updatedSubmission.attemptPatternSnapshot || {};
+  const selection = selectSubjectiveQuestionsByAnswerOrder(targetQuestions, updatedSubmission.pages, pattern);
+  if (!selection.detectedOrder.length) {
+    updatedSubmission.status = 'review_required';
+    updatedSubmission.errorMessage = 'Question numbers could not be identified. Number each written answer clearly, then upload the answer sheet again.';
+    updatedSubmission.evaluationLeaseUntil = null;
+    await updatedSubmission.save();
+    return updatedSubmission;
+  }
+  if (!selection.questionsToEvaluate.length) {
+    updatedSubmission.status = 'review_required';
+    updatedSubmission.errorMessage = 'No numbered answers matched the written questions in this exam.';
+    updatedSubmission.evaluationLeaseUntil = null;
+    await updatedSubmission.save();
+    return updatedSubmission;
   }
 
   const evaluations = [];
-  let totalMaxMarks = 0;
+  const totalMaxMarks = selection.totalMaxMarks;
   let totalAwardedMarks = 0;
 
-  for (const q of targetQuestions) {
-    totalMaxMarks += q.maxMarks;
-
+  for (const q of selection.questionsToEvaluate) {
     const evaluationPrompt = `You are a strict, fair Indian State Board (BSEB/CBSE) examiner checking a handwritten subjective answer copy.
 
 Subject: ${updatedSubmission.subjectName || updatedSubmission.subjectCode}
@@ -248,7 +415,16 @@ Return STRICT JSON:
         taskType: 'heavy',
       });
 
-      const awarded = Math.min(q.maxMarks, Math.max(0, Number(result.awardedMarks) || 0));
+      const rawAwardedMarks = result.awardedMarks;
+      const awardedValue = Number(rawAwardedMarks);
+      if ((typeof rawAwardedMarks !== 'number'
+        && (typeof rawAwardedMarks !== 'string' || !rawAwardedMarks.trim()))
+        || !Number.isFinite(awardedValue)
+        || awardedValue < 0
+        || awardedValue > q.maxMarks) {
+        throw new Error('AI returned an invalid mark value');
+      }
+      const awarded = awardedValue;
       totalAwardedMarks += awarded;
 
       evaluations.push({
@@ -267,26 +443,7 @@ Return STRICT JSON:
         examinerRemarks: result.examinerRemarks || 'Evaluated.',
       });
     } catch (evalErr) {
-      console.warn(`Fallback evaluation for Q${q.questionNumber}:`, evalErr.message);
-      
-      const fallbackAwarded = 0; 
-      totalAwardedMarks += fallbackAwarded;
-
-      evaluations.push({
-        questionNumber: q.questionNumber,
-        questionText: q.questionText,
-        hindiQuestionText: q.hindiQuestionText,
-        modelAnswer: q.modelAnswer,
-        studentAnswer: 'Evaluation Error',
-        maxMarks: q.maxMarks,
-        awardedMarks: fallbackAwarded,
-        feedback: 'AI was unable to evaluate this answer due to formatting or unreadable text.',
-        keywordsCovered: [],
-        keywordsMissed: [],
-        stepMarksBreakdown: [],
-        diagramCredit: { required: false, awarded: 0, maxMarks: 0, comment: 'N/A' },
-        examinerRemarks: 'Could not evaluate.',
-      });
+      throw new Error(`AI evaluation failed for question ${q.questionNumber}: ${evalErr.message}`);
     }
   }
 
@@ -296,6 +453,7 @@ Return STRICT JSON:
   updatedSubmission.obtainedMarks = totalAwardedMarks;
   updatedSubmission.percentage = percentage;
   updatedSubmission.status = 'completed';
+  updatedSubmission.evaluationLeaseUntil = null;
   updatedSubmission.completedAt = new Date();
   updatedSubmission.durationMs = updatedSubmission.completedAt.getTime() - updatedSubmission.startedAt.getTime();
 
@@ -309,16 +467,40 @@ Return STRICT JSON:
   updatedSubmission.areasOfImprovement = ['More detailed step marks', 'Include key terminology'];
 
   await updatedSubmission.save();
-
-  try {
-    await Notification.create({
+  if (updatedSubmission.attemptId) {
+    const attempt = await TestAttempt.findOne({
+      _id: updatedSubmission.attemptId,
       userId: updatedSubmission.userId,
-      title: 'Answer Sheet Evaluated! 📄',
-      message: `Your handwritten answer copy for ${updatedSubmission.subjectName || updatedSubmission.subjectCode} has been checked. Scored ${totalAwardedMarks}/${totalMaxMarks} (${percentage}%).`,
-      type: 'subjective_result',
-      link: `upload-sheet.html?submissionId=${updatedSubmission._id}`,
     });
-  } catch (notifErr) {}
+    if (attempt) {
+      attempt.subjectiveSubmissionId = updatedSubmission._id;
+      attempt.subjectiveScore = {
+        totalMarks: totalMaxMarks,
+        obtainedMarks: totalAwardedMarks,
+        percentage,
+      };
+      const combinedTotalMarks = (attempt.score?.totalMarks || 0) + totalMaxMarks;
+      const combinedObtainedMarks = (attempt.score?.obtainedMarks || 0) + totalAwardedMarks;
+      attempt.combinedScore = {
+        totalMarks: combinedTotalMarks,
+        obtainedMarks: combinedObtainedMarks,
+        percentage: combinedTotalMarks ? Math.round((combinedObtainedMarks / combinedTotalMarks) * 100) : 0,
+      };
+      await attempt.save();
+    }
+  }
+
+  if (!updatedSubmission.attemptId) {
+    try {
+      await Notification.create({
+        userId: updatedSubmission.userId,
+        title: 'Answer Sheet Evaluated! 📄',
+        message: `Your handwritten answer copy for ${updatedSubmission.subjectName || updatedSubmission.subjectCode} has been checked. Scored ${totalAwardedMarks}/${totalMaxMarks} (${percentage}%).`,
+        type: 'subjective_result',
+        link: `upload-sheet.html?submissionId=${updatedSubmission._id}`,
+      });
+    } catch (notifErr) {}
+  }
 
   return updatedSubmission;
 }
@@ -343,10 +525,14 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
     year = null,
     examPhase = '',
     setCode = '',
+    attemptId = null,
+    expectedQuestions = [],
+    attemptPatternSnapshot = {},
   } = options;
 
   const submission = new SubjectiveSubmission({
     userId,
+    attemptId,
     boardCode,
     classLevel,
     subjectCode,
@@ -357,6 +543,8 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
     year,
     examPhase,
     setCode,
+    expectedQuestions,
+    attemptPatternSnapshot,
     pages: pages.map((p, idx) => {
       const pageData = {
         pageNumber: idx + 1,
@@ -370,24 +558,12 @@ export async function evaluateAnswerSheet(pages, userId, options = {}) {
     }),
     totalPages: pages.length,
     status: 'uploading',
+    evaluationLeaseUntil: null,
     startedAt: new Date(),
   });
 
   await submission.save();
-
-  setImmediate(async () => {
-    try {
-      await evaluateSubmission(submission._id);
-    } catch (err) {
-      console.error('Background evaluation error:', err);
-      const failedSubmission = await SubjectiveSubmission.findById(submission._id);
-      if (failedSubmission) {
-        failedSubmission.status = 'failed';
-        failedSubmission.errorMessage = err.message;
-        await failedSubmission.save();
-      }
-    }
-  });
+  scheduleEvaluationWorker();
 
   return {
     success: true,
@@ -434,25 +610,13 @@ export async function retryEvaluation(submissionId, userId) {
   }
 
   submission.status = 'uploading';
+  submission.evaluationLeaseUntil = null;
   submission.errorMessage = '';
   submission.startedAt = new Date();
   submission.completedAt = null;
   submission.durationMs = 0;
   await submission.save();
-
-  setImmediate(async () => {
-    try {
-      await evaluateSubmission(submission._id);
-    } catch (err) {
-      console.error('Retry evaluation error:', err);
-      const failedSubmission = await SubjectiveSubmission.findById(submission._id);
-      if (failedSubmission) {
-        failedSubmission.status = 'failed';
-        failedSubmission.errorMessage = err.message;
-        await failedSubmission.save();
-      }
-    }
-  });
+  scheduleEvaluationWorker();
 
   return {
     success: true,

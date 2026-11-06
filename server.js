@@ -20,6 +20,8 @@ import adminRoute from './routes/admin.js';
 import adminPaperRoutes from './routes/adminPaperRoutes.js';
 import superAdminPaperRoutes from './routes/superAdminPaperRoutes.js';
 import adminExtrasRoutes from './routes/adminExtras.js';
+import { startQuestionGenerationWorker } from './services/questionGenerator.js';
+import { startSubjectiveEvaluationWorker } from './services/handwritingEvaluator.js';
 
 dotenv.config();
 
@@ -151,6 +153,8 @@ app.use((err, req, res, next) => {
 async function start() {
   console.log('\n🚀 Starting Nexus Backend...\n');
   await connectDB();
+  startQuestionGenerationWorker();
+  startSubjectiveEvaluationWorker();
   const httpServer = http.createServer(app);
 
   httpServer.listen(PORT, () => {

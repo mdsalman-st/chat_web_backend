@@ -82,6 +82,22 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
     examPhase: { type: String, default: null },
     setCode: { type: String, default: null },
 
+    expectedQuestions: [{
+      questionNumber: { type: Number, required: true },
+      questionType: { type: String, enum: ['short', 'long', 'subjective'], default: 'subjective' },
+      questionText: { type: String, default: '' },
+      hindiQuestionText: { type: String, default: '' },
+      maxMarks: { type: Number, required: true },
+      modelAnswer: { type: String, default: '' },
+    }],
+    attemptPatternSnapshot: {
+      shortCount: { type: Number },
+      shortAttemptLimit: { type: Number },
+      shortMarks: { type: Number },
+      longCount: { type: Number },
+      longAttemptLimit: { type: Number },
+      longMarks: { type: Number },
+    },
     pages: [pageEntrySchema],
     totalPages: { type: Number, default: 0 },
     combinedTranscript: { type: String, default: '' },
@@ -96,10 +112,11 @@ const subjectiveSubmissionSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['uploading', 'ocr_processing', 'evaluating', 'completed', 'failed'],
+      enum: ['uploading', 'ocr_processing', 'evaluating', 'completed', 'failed', 'review_required'],
       default: 'uploading',
       index: true,
     },
+    evaluationLeaseUntil: { type: Date, default: null, index: true },
     errorMessage: { type: String, default: '' },
 
     startedAt: { type: Date, default: Date.now },

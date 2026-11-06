@@ -10,7 +10,7 @@ const answerEntrySchema = new mongoose.Schema(
   {
     questionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Question', required: true },
     selectedOption: { type: String, default: null }, // 'A','B','C','D' or null if skipped
-    correctOption: { type: String, required: true },
+    correctOption: { type: String },
     isCorrect: { type: Boolean, default: false },
     isSkipped: { type: Boolean, default: true },
     timeTakenMs: { type: Number, default: 0 }, // time spent on this question
@@ -20,6 +20,10 @@ const answerEntrySchema = new mongoose.Schema(
     chapterNumber: { type: Number },
     subtopic: { type: String, default: '' },
     mistakeReason: { type: String, default: '' },
+    // Track first answer time for attempt-limit priority
+    firstAnsweredAt: { type: Date, default: null },
+    // Track if this answer counts toward the board attempt limit
+    countsTowardLimit: { type: Boolean, default: true },
   },
   { _id: false }
 );
@@ -40,15 +44,17 @@ const testAttemptSchema = new mongoose.Schema(
     },
     boardCode: { type: String, required: true, lowercase: true },
     classLevel: { type: String, required: true },
+    stream: { type: String, default: null },
     subjectCode: { type: String, required: true, lowercase: true },
     subjectName: { type: String, default: '' },
     chapterNumber: { type: Number, default: null }, // null for full paper
     chapterTitle: { type: String, default: '' },
     medium: { type: String, enum: SUPPORTED_MEDIUMS, default: 'Hindi' },
 
-    // Question IDs for this test (order preserved)
+    // Question IDs for this test (order preserved - IMMUTABLE once set)
     questionIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Question' }],
     totalQuestions: { type: Number, default: 0 },
+    generationJobId: { type: mongoose.Schema.Types.ObjectId, ref: 'GenerationJob', default: null },
 
     // Answers
     answers: [answerEntrySchema],
@@ -64,8 +70,35 @@ const testAttemptSchema = new mongoose.Schema(
     // Timing
     startedAt: { type: Date, default: Date.now },
     finishedAt: { type: Date, default: null },
+    resultReleaseAt: { type: Date, default: null },
+    subjectiveUploadDeadlineAt: { type: Date, default: null },
     durationMs: { type: Number, default: 0 }, // total time taken
     timeLimitMs: { type: Number, default: 0 }, // 0 = unlimited (practice mode)
+    // Server-authoritative deadline for exam mode
+    deadlineAt: { type: Date, default: null },
+
+    // Resume state
+    currentQuestionIndex: { type: Number, default: 0 },
+    currentSection: { type: String, enum: ['mcq', 'subjective'], default: 'mcq' },
+
+    // Board pattern snapshot (so the attempt uses the pattern at start time)
+    boardPatternSnapshot: {
+      mcqCount: { type: Number },
+      attemptLimit: { type: Number },
+      marksPerMcq: { type: Number },
+      durationMinutes: { type: Number },
+      negativeMarking: { type: Number },
+      optionsCount: { type: Number },
+      hasShortAnswer: { type: Boolean },
+      shortCount: { type: Number },
+      shortMarks: { type: Number },
+      shortAttemptLimit: { type: Number },
+      hasLongAnswer: { type: Boolean },
+      longCount: { type: Number },
+      longMarks: { type: Number },
+      longAttemptLimit: { type: Number },
+      totalMarks: { type: Number },
+    },
 
     // Score breakdown
     score: {
@@ -120,6 +153,7 @@ const testAttemptSchema = new mongoose.Schema(
       ref: 'SubjectiveSubmission', 
       default: null 
     },
+    subjectiveRequired: { type: Boolean, default: false },
     subjectiveScore: {
       totalMarks: { type: Number, default: 0 },
       obtainedMarks: { type: Number, default: 0 },

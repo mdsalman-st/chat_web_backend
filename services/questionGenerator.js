@@ -1,82 +1,372 @@
 import Chapter from '../models/Chapter.js';
 import Question from '../models/Question.js';
 import GenerationJob from '../models/GenerationJob.js';
-import OfficialPaper from '../models/OfficialPaper.js'; 
 import { executeAiJsonWithFailover } from '../utils/aiClient.js';
 import { getChapterForMedium, getResolvedBoardConfig } from '../utils/boardEngine.js';
 import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
-export async function queueOrGetChapterJob({ boardCode, classLevel, subjectCode, chapterNumber, medium = 'Hindi', isHardMode = false, targetCount = 10 }) {
+const LEASE_MS = 2 * 60 * 1000;
+const HEARTBEAT_MS = 30 * 1000;
+const BATCH_SIZE = 3;
+const SUBJECTIVE_BATCH_SIZE = 2;
+const MAX_EMPTY_BATCHES = 3;
+
+let workerScheduled = false;
+let workerRunning = false;
+let recoveryTimer = null;
+
+function jobScope(job) {
+  return {
+    boardCode: job.boardCode.toLowerCase(),
+    classLevel: String(job.classLevel),
+    stream: job.stream || null,
+    subjectCode: job.subjectCode.toLowerCase(),
+    chapterNumber: Number(job.chapterNumber),
+    medium: job.medium,
+    isHardMode: job.isHardMode ? true : { $ne: true },
+  };
+}
+
+function progressPercent(counts, targets) {
+  const totalTarget = targets.mcq + targets.short + targets.long;
+  if (!totalTarget) return 100;
+  const completed = Math.min(counts.mcq, targets.mcq)
+    + Math.min(counts.short, targets.short)
+    + Math.min(counts.long, targets.long);
+  return Math.min(99, Math.floor((completed / totalTarget) * 100));
+}
+
+async function countQuestions(scope, type) {
+  return Question.countDocuments({
+    ...scope,
+    type,
+    isActive: true,
+    status: 'verified',
+  });
+}
+
+export async function queueOrGetChapterJob({
+  boardCode,
+  classLevel,
+  stream = null,
+  subjectCode,
+  chapterNumber,
+  medium = 'Hindi',
+  isHardMode = false,
+  targetCount = 10,
+  marksPerMcq = 1,
+  targetShortCount = 0,
+  shortMarks = 2,
+  targetLongCount = 0,
+  longMarks = 5,
+}) {
   const normMedium = normalizeMedium(medium);
   if (!normMedium) throw new Error(`Unsupported medium: ${medium}`);
-  const jobKey = `${boardCode.toLowerCase()}_${classLevel}_${subjectCode.toLowerCase()}_${chapterNumber}_${normMedium.toLowerCase()}_${isHardMode ? 'hard' : 'normal'}`;
 
+  const normalizedStream = stream ? String(stream).trim().toLowerCase() : null;
+  const streamKey = normalizedStream ? `_${normalizedStream}` : '';
+  const jobKey = `${boardCode.toLowerCase()}_${classLevel}_${subjectCode.toLowerCase()}_${chapterNumber}_${normMedium.toLowerCase()}${streamKey}_${isHardMode ? 'hard' : 'normal'}`;
   let job = await GenerationJob.findOne({ jobKey });
-  if (job && (job.status === 'running' || job.status === 'queued')) return job;
-  
-  if (job && job.status === 'completed') {
-    const count = await Question.countDocuments({ boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium: normMedium, type: 'mcq', isActive: true, status: 'verified' });
-    if (count >= targetCount) return job;
+  const targets = {
+    mcq: Math.max(0, Number(targetCount) || 0),
+    short: Math.max(0, Number(targetShortCount) || 0),
+    long: Math.max(0, Number(targetLongCount) || 0),
+  };
+
+  if (job?.status === 'completed') {
+    const scope = jobScope(job);
+    const [mcqCount, shortCount, longCount] = await Promise.all([
+      countQuestions(scope, 'mcq'),
+      countQuestions(scope, 'short'),
+      countQuestions(scope, 'long'),
+    ]);
+    if (mcqCount >= targets.mcq && shortCount >= targets.short && longCount >= targets.long) return job;
   }
 
-  job = await GenerationJob.findOneAndUpdate({ jobKey }, {
-    $set: { boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium: normMedium, isHardMode: !!isHardMode, status: 'running', progressPercent: 10, progressMessage: 'Initializing...', verifiedCount: 0, targetCount, startedAt: new Date(), completedAt: null, error: null }
-  }, { upsert: true, new: true });
+  if (job && job.status !== 'failed') {
+    job = await GenerationJob.findByIdAndUpdate(job._id, {
+      $max: {
+        targetCount: targets.mcq,
+        targetShortCount: targets.short,
+        targetLongCount: targets.long,
+      },
+      $set: {
+        status: job.status === 'completed' ? 'queued' : job.status,
+        marksPerMcq: Number(marksPerMcq) || 1,
+        shortMarks: Number(shortMarks) || 2,
+        longMarks: Number(longMarks) || 5,
+      },
+    }, { new: true });
+  } else {
+    job = await GenerationJob.findOneAndUpdate({ jobKey }, {
+      $set: {
+        jobKey,
+        boardCode: boardCode.toLowerCase(),
+        classLevel: String(classLevel),
+        stream: normalizedStream,
+        subjectCode: subjectCode.toLowerCase(),
+        chapterNumber: Number(chapterNumber),
+        medium: normMedium,
+        isHardMode: !!isHardMode,
+        status: 'queued',
+        generationStage: 'mcq',
+        progressPercent: 0,
+        progressMessage: 'Waiting for question generation…',
+        targetCount: targets.mcq,
+        targetShortCount: targets.short,
+        targetLongCount: targets.long,
+        marksPerMcq: Number(marksPerMcq) || 1,
+        shortMarks: Number(shortMarks) || 2,
+        longMarks: Number(longMarks) || 5,
+        workerLeaseUntil: null,
+        startedAt: null,
+        completedAt: null,
+        error: null,
+      },
+    }, { upsert: true, new: true, setDefaultsOnInsert: true });
+  }
 
-  setImmediate(async () => {
-    try { await runGenerationAndVerification(job); } 
-    catch (err) {
-      await GenerationJob.findByIdAndUpdate(job._id, { $set: { status: 'failed', error: err.message, progressMessage: 'Failed to generate.' } });
-    }
-  });
+  scheduleWorker();
   return job;
 }
 
-async function runGenerationAndVerification(job) {
-  const { boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount } = job;
-  const boardConfig = await getResolvedBoardConfig(boardCode);
-  const requiredCount = Math.max(1, Number(targetCount) || 10);
-  
-  const chapter = await getChapterForMedium({ boardCode, classLevel, subjectCode, chapterNumber, medium });
-  const chapterTitle = chapter ? chapterTitleForMedium(chapter, medium) : `Chapter ${chapterNumber}`;
-  const baseQ = { boardCode: boardCode.toLowerCase(), classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber: Number(chapterNumber), medium };
+function scheduleWorker() {
+  if (workerScheduled || workerRunning) return;
+  workerScheduled = true;
+  setImmediate(() => {
+    workerScheduled = false;
+    runWorker().catch((error) => console.error('[QuestionGeneration] Worker error:', error));
+  });
+}
 
-  let dbMcq = await Question.countDocuments({ ...baseQ, type: 'mcq', status: 'verified' });
-  let attempts = 0;
+async function runWorker() {
+  if (workerRunning) return;
+  workerRunning = true;
+  try {
+    while (true) {
+      const now = new Date();
+      const job = await GenerationJob.findOneAndUpdate({
+        $or: [
+          { status: 'queued' },
+          { status: 'running', $or: [{ workerLeaseUntil: null }, { workerLeaseUntil: { $lte: now } }] },
+        ],
+      }, {
+        $set: { status: 'running', workerLeaseUntil: new Date(now.getTime() + LEASE_MS) },
+        }, {
+        sort: { createdAt: 1 },
+        new: true,
+      });
+      if (!job) break;
+      if (!job.startedAt) {
+        await GenerationJob.updateOne({ _id: job._id }, { $set: { startedAt: now } });
+      }
 
-  while (dbMcq < requiredCount && attempts < 20) {
-    attempts++;
-    const batchSize = Math.min(3, requiredCount - dbMcq);
+      const heartbeat = setInterval(() => {
+        GenerationJob.updateOne(
+          { _id: job._id, status: 'running' },
+          { $set: { workerLeaseUntil: new Date(Date.now() + LEASE_MS) } },
+        ).catch((error) => console.error('[QuestionGeneration] Lease renewal failed:', error));
+      }, HEARTBEAT_MS);
+      heartbeat.unref?.();
 
-    const prompt = `Generate EXACTLY ${batchSize} MCQs for:
-Class ${classLevel} | ${subjectCode} | Chapter ${chapterNumber} (${chapterTitle}) | Lang: ${medium}
-Return JSON: { "questions": [ { "type": "mcq", "questionText": "...", "hindiQuestionText": "...", "options": [{"key":"A","text":"..."},{"key":"B","text":"..."},{"key":"C","text":"..."},{"key":"D","text":"..."}], "correctOption": "A", "explanation": "...", "marks": 1, "difficulty": "Medium", "subtopic": "..." } ] }`;
-
-    const aiRes = await executeAiJsonWithFailover({ prompt, systemInstruction: `Expert exam creator for ${boardConfig.name}.`, taskType: 'heavy' });
-    const candidates = aiRes.result?.questions || [];
-    if (candidates.length === 0) throw new Error('AI did not return any questions.');
-    const previousCount = dbMcq;
-
-    for (const c of candidates) {
-      await Question.findOneAndUpdate(
-        { ...baseQ, questionText: c.questionText.trim() },
-        { $set: { hindiQuestionText: c.hindiQuestionText, difficulty: c.difficulty || 'Medium', subtopic: c.subtopic || '', chapterTitle, type: 'mcq', marks: 1, isAiGenerated: true, sourceLabel: 'AI-generated', status: 'verified', isActive: true, options: c.options, correctOption: c.correctOption, explanation: c.explanation } },
-        { upsert: true }
-      );
+      try {
+        await runGenerationAndVerification(job);
+      } catch (error) {
+        console.error(`[QuestionGeneration] Job ${job._id} failed:`, error);
+        await GenerationJob.updateOne({ _id: job._id }, {
+          $set: {
+            status: 'failed',
+            error: error.message,
+            progressMessage: 'Question generation failed. Retry it from this exam to continue.',
+            workerLeaseUntil: null,
+          },
+        });
+      } finally {
+        clearInterval(heartbeat);
+      }
     }
+  } finally {
+    workerRunning = false;
+  }
+}
 
-    dbMcq = await Question.countDocuments({ ...baseQ, type: 'mcq', status: 'verified' });
-    if (dbMcq <= previousCount) throw new Error('AI did not generate any new questions.');
-    await GenerationJob.findByIdAndUpdate(job._id, { $set: {
-      progressPercent: Math.min(95, 10 + Math.round((dbMcq / requiredCount) * 85)),
-      progressMessage: `Generated ${dbMcq}/${requiredCount} MCQs...`,
-      verifiedCount: dbMcq,
-    } });
+export function startQuestionGenerationWorker() {
+  if (recoveryTimer) return;
+  scheduleWorker();
+  recoveryTimer = setInterval(scheduleWorker, 10 * 1000);
+  recoveryTimer.unref?.();
+}
+
+async function generateBatch({ job, stage, batchSize, chapterTitle, boardName, scope }) {
+  const isMcq = stage === 'mcq';
+  const typeLabel = isMcq ? 'multiple-choice questions' : `${stage}-answer subjective questions`;
+  const schema = isMcq
+    ? '{ "type":"mcq", "questionText":"...", "hindiQuestionText":"...", "options":[{"key":"A","text":"..."},{"key":"B","text":"..."},{"key":"C","text":"..."},{"key":"D","text":"..."}], "correctOption":"A", "explanation":"...", "marks":1, "difficulty":"Medium", "subtopic":"..." }'
+    : `{ "type":"${stage}", "questionText":"...", "hindiQuestionText":"...", "modelAnswer":"...", "hindiModelAnswer":"...", "marks":${stage === 'short' ? job.shortMarks || 2 : job.longMarks || 5}, "difficulty":"Medium", "subtopic":"..." }`;
+  const prompt = `Generate EXACTLY ${batchSize} new ${typeLabel} for the selected board and chapter.
+Board: ${boardName}
+Class ${job.classLevel}${job.stream ? ` | Stream: ${job.stream}` : ''} | Subject ${job.subjectCode} | Chapter ${job.chapterNumber} (${chapterTitle}) | Language: ${job.medium}
+Questions must stay within this chapter's syllabus, avoid duplicates, use the requested language, and match the board's expected difficulty.
+Return strict JSON: { "questions": [ ${schema} ] }`;
+  const aiResponse = await executeAiJsonWithFailover({
+    prompt,
+    systemInstruction: `Create clear, syllabus-bound examination questions for ${boardName}.`,
+    taskType: 'heavy',
+  });
+  const candidates = aiResponse.result?.questions;
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    throw new Error(`AI returned no ${stage} questions.`);
   }
 
-  if (dbMcq < requiredCount) throw new Error(`Could only generate ${dbMcq} of ${requiredCount} requested questions.`);
+  let inserted = 0;
+  for (const candidate of candidates.slice(0, batchSize)) {
+    const questionText = typeof candidate.questionText === 'string' ? candidate.questionText.trim() : '';
+    const marks = Number(candidate.marks);
+    if (!questionText || !Number.isFinite(marks) || marks <= 0) continue;
 
-  const finalCount = await Question.countDocuments({ ...baseQ, status: 'verified' });
-  if (chapter) await Chapter.updateOne({ _id: chapter._id }, { $set: { questionCount: finalCount, verifiedQuestionCount: finalCount, isLive: true } });
-  await GenerationJob.findByIdAndUpdate(job._id, { $set: { status: 'completed', progressPercent: 100, progressMessage: `Ready! ${finalCount} questions.`, verifiedCount: finalCount, completedAt: new Date() } });
+    const questionFields = {
+      ...scope,
+      isHardMode: !!job.isHardMode,
+      questionText,
+      hindiQuestionText: typeof candidate.hindiQuestionText === 'string' ? candidate.hindiQuestionText.trim() : '',
+      difficulty: ['Easy', 'Medium', 'Hard'].includes(candidate.difficulty) ? candidate.difficulty : 'Medium',
+      subtopic: typeof candidate.subtopic === 'string' ? candidate.subtopic.trim() : '',
+      chapterTitle,
+      type: stage,
+      marks,
+      isAiGenerated: true,
+      sourceLabel: 'AI-generated board-pattern question',
+      status: 'verified',
+      verifiedBy: 'ai-structured-generation',
+      isActive: true,
+      options: [],
+    };
+
+    if (isMcq) {
+      const options = Array.isArray(candidate.options) ? candidate.options : [];
+      const normalizedOptions = options.map((option) => ({
+        key: String(option.key || '').toUpperCase(),
+        text: String(option.text || '').trim(),
+      }));
+      const keys = new Set(normalizedOptions.map((option) => option.key));
+      const correctOption = String(candidate.correctOption || '').toUpperCase();
+      if (normalizedOptions.length !== 4
+        || ['A', 'B', 'C', 'D'].some((key) => !keys.has(key))
+        || normalizedOptions.some((option) => !option.text)
+        || !keys.has(correctOption)) continue;
+      questionFields.options = normalizedOptions;
+      questionFields.correctOption = correctOption;
+      questionFields.explanation = String(candidate.explanation || '');
+      questionFields.marks = Number(job.marksPerMcq) || marks;
+    } else {
+      const modelAnswer = String(candidate.modelAnswer || candidate.hindiModelAnswer || '').trim();
+      if (!modelAnswer) continue;
+      questionFields.modelAnswer = modelAnswer;
+      questionFields.hindiModelAnswer = String(candidate.hindiModelAnswer || '').trim();
+    }
+
+    const result = await Question.updateOne(
+      { ...scope, type: stage, questionText },
+      { $setOnInsert: questionFields },
+      { upsert: true },
+    );
+    if (result.upsertedCount) inserted++;
+  }
+  return inserted;
+}
+
+async function updateJobProgress(job, stage, counts, targets) {
+  const stageTarget = targets[stage];
+  const stageCount = counts[stage];
+  await GenerationJob.updateOne({ _id: job._id }, {
+    $set: {
+      generationStage: stage,
+      verifiedCount: counts.mcq,
+      verifiedShortCount: counts.short,
+      verifiedLongCount: counts.long,
+      progressPercent: progressPercent(counts, targets),
+      progressMessage: `Generating ${stage} questions (${Math.min(stageCount, stageTarget)}/${stageTarget})…`,
+      workerLeaseUntil: new Date(Date.now() + LEASE_MS),
+    },
+  });
+}
+
+async function generateStage(job, stage, scope, chapterTitle, boardName, counts, targets) {
+  let emptyBatches = 0;
+  const batchSizeLimit = stage === 'mcq' ? BATCH_SIZE : SUBJECTIVE_BATCH_SIZE;
+  while (counts[stage] < targets[stage]) {
+    const inserted = await generateBatch({
+      job,
+      stage,
+      batchSize: Math.min(batchSizeLimit, targets[stage] - counts[stage]),
+      chapterTitle,
+      boardName,
+      scope,
+    });
+    if (!inserted) {
+      emptyBatches++;
+      if (emptyBatches >= MAX_EMPTY_BATCHES) {
+        throw new Error(`Could not create distinct, valid ${stage} questions after ${MAX_EMPTY_BATCHES} AI batches.`);
+      }
+    } else {
+      emptyBatches = 0;
+      counts[stage] = await countQuestions(scope, stage);
+    }
+    await updateJobProgress(job, stage, counts, targets);
+  }
+}
+
+async function runGenerationAndVerification(job) {
+  const boardConfig = await getResolvedBoardConfig(job.boardCode);
+  const chapter = await getChapterForMedium({
+    boardCode: job.boardCode,
+    classLevel: job.classLevel,
+    stream: job.stream,
+    subjectCode: job.subjectCode,
+    chapterNumber: job.chapterNumber,
+    medium: job.medium,
+  });
+  const chapterTitle = chapter
+    ? chapterTitleForMedium(chapter, job.medium)
+    : `Chapter ${job.chapterNumber}`;
+  const scope = jobScope(job);
+  const targets = {
+    mcq: Math.max(0, Number(job.targetCount) || 0),
+    short: Math.max(0, Number(job.targetShortCount) || 0),
+    long: Math.max(0, Number(job.targetLongCount) || 0),
+  };
+  const counts = {
+    mcq: await countQuestions(scope, 'mcq'),
+    short: await countQuestions(scope, 'short'),
+    long: await countQuestions(scope, 'long'),
+  };
+
+  for (const stage of ['mcq', 'short', 'long']) {
+    if (targets[stage] === 0 || counts[stage] >= targets[stage]) continue;
+    await generateStage(job, stage, scope, chapterTitle, boardConfig.name, counts, targets);
+  }
+
+  const finalCount = counts.mcq + counts.short + counts.long;
+  if (chapter) {
+    await Chapter.updateOne({ _id: chapter._id }, {
+      $set: {
+        questionCount: finalCount,
+        verifiedQuestionCount: finalCount,
+        isLive: true,
+      },
+    });
+  }
+  await GenerationJob.updateOne({ _id: job._id }, {
+    $set: {
+      status: 'completed',
+      generationStage: 'completed',
+      progressPercent: 100,
+      progressMessage: `Ready! ${counts.mcq} MCQs, ${counts.short} short-answer and ${counts.long} long-answer questions.`,
+      verifiedCount: counts.mcq,
+      verifiedShortCount: counts.short,
+      verifiedLongCount: counts.long,
+      workerLeaseUntil: null,
+      completedAt: new Date(),
+    },
+  });
 }

@@ -157,7 +157,8 @@ const BOARDS_DATA = [
     ],
     paperPattern: {
       mcqCount: 100, attemptLimit: 50, marksPerMcq: 1, durationMinutes: 195, negativeMarking: 0, optionsCount: 4,
-      hasShortAnswer: true, shortCount: 30, shortMarks: 2, hasLongAnswer: true, longCount: 8, longMarks: 5, totalMarks: 100,
+      hasShortAnswer: true, shortCount: 30, shortAttemptLimit: 15, shortMarks: 2,
+      hasLongAnswer: true, longCount: 8, longAttemptLimit: 4, longMarks: 5, totalMarks: 100,
     },
     classes: [
       {

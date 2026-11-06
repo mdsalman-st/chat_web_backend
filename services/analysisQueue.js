@@ -1,7 +1,9 @@
 import TestAttempt from '../models/TestAttempt.js';
+import SubjectiveSubmission from '../models/SubjectiveSubmission.js';
 import Question from '../models/Question.js';
 import Notification from '../models/Notification.js';
 import { executeAiJsonWithFailover } from '../utils/aiClient.js';
+import { getResultReleaseState } from '../utils/resultRelease.js';
 
 class AnalysisQueueService {
   constructor() {
@@ -150,18 +152,23 @@ Return JSON in this format:
     attempt.aiAnalysisEta = 'Ready';
     await attempt.save();
 
-    // Create student notification
-    try {
-      await Notification.create({
-        userId: attempt.userId,
-        type: 'analysis_ready',
-        title: 'Diagnostic Test Analysis Ready!',
-        message: `Your AI performance review and PDF report for "${attempt.chapterTitle || attempt.subjectName}" is ready to view.`,
-        link: `test-results.html?attemptId=${attempt._id}`,
-      });
-      console.log(`[AnalysisQueue] Created ready notification for student ${attempt.userId}`);
-    } catch (notifErr) {
-      console.error('[AnalysisQueue] Notification creation error:', notifErr);
+    // Do not announce a result before its server-controlled release time.
+    const submission = attempt.subjectiveSubmissionId
+      ? await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean()
+      : null;
+    if (getResultReleaseState(attempt, submission).available) {
+      try {
+        await Notification.create({
+          userId: attempt.userId,
+          type: 'analysis_ready',
+          title: 'Diagnostic Test Analysis Ready!',
+          message: `Your AI performance review and PDF report for "${attempt.chapterTitle || attempt.subjectName}" is ready to view.`,
+          link: `test-results.html?attemptId=${attempt._id}`,
+        });
+        console.log(`[AnalysisQueue] Created ready notification for student ${attempt.userId}`);
+      } catch (notifErr) {
+        console.error('[AnalysisQueue] Notification creation error:', notifErr);
+      }
     }
   }
 }

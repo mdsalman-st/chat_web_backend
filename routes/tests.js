@@ -8,6 +8,10 @@ import {
   updateStudentProfile,
   prepareChapterQuestions,
   getGenerationJobStatus,
+  getAttemptState,
+  syncAttemptQuestions,
+  retryAttemptGeneration,
+  updateAttemptState,
   getChapterPracticeQuestions,
   flagQuestion,
   startTest,
@@ -54,6 +58,10 @@ router.post('/questions/:questionId/flag', protect, flagQuestion);
 
 /* Phase 3: Live Test Engine */
 router.post('/start', protect, startTest);
+router.get('/:attemptId/state', protect, getAttemptState);
+router.patch('/:attemptId/state', protect, updateAttemptState);
+router.post('/:attemptId/questions/sync', protect, syncAttemptQuestions);
+router.post('/:attemptId/generation/retry', protect, retryAttemptGeneration);
 router.post('/:attemptId/answer', protect, submitAnswer);
 router.post('/:attemptId/finish', protect, finishTest);
 router.get('/:attemptId/result', protect, getResult);

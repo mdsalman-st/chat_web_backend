@@ -65,9 +65,11 @@ const paperPatternSchema = new mongoose.Schema(
     hasShortAnswer: { type: Boolean, default: false },
     shortCount: { type: Number, default: 0 },
     shortMarks: { type: Number, default: 2 },
+    shortAttemptLimit: { type: Number },
     hasLongAnswer: { type: Boolean, default: false },
     longCount: { type: Number, default: 0 },
     longMarks: { type: Number, default: 5 },
+    longAttemptLimit: { type: Number },
     totalMarks: { type: Number, default: 50 },
   },
   { _id: false }

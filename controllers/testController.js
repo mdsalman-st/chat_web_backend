@@ -32,6 +32,11 @@ import {
   getChaptersForSubject,
 } from '../utils/boardEngine.js';
 import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
+import {
+  ANSWER_SHEET_UPLOAD_GRACE_MS,
+  getResultReleaseState,
+  RESULT_RELEASE_DELAY_MS,
+} from '../utils/resultRelease.js';
 
 /**
  * Test Controller — Final Optimized & Secured (Fast Start)
@@ -257,6 +262,9 @@ export async function prepareChapterQuestions(req, res) {
     const studentProf = req.user?.studentProfile || {};
     const boardCode = req.body.boardCode || studentProf.board || 'bseb';
     const classLevel = req.body.classLevel || studentProf.classLevel || '10';
+    const stream = (req.body.stream || studentProf.stream)
+      ? String(req.body.stream || studentProf.stream).trim().toLowerCase()
+      : null;
     const subjectCode = req.body.subjectCode;
     const chapterNumber = Number(req.body.chapterNumber);
     const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
@@ -265,34 +273,78 @@ export async function prepareChapterQuestions(req, res) {
     if (!subjectCode || !chapterNumber) return res.status(400).json({ error: 'subjectCode and chapterNumber are required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    const targetCount = Number(req.body.targetCount) || 10;
+    const boardConfig = await getResolvedBoardConfig(boardCode);
+    const pattern = boardConfig.paperPattern || {};
+    const targetCount = Math.max(0, Number(pattern.mcqCount) || 0);
+    const targetShortCount = pattern.hasShortAnswer ? Math.max(0, Number(pattern.shortCount) || 0) : 0;
+    const targetLongCount = pattern.hasLongAnswer ? Math.max(0, Number(pattern.longCount) || 0) : 0;
 
     const existingCount = await Question.countDocuments({
       boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
-      subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, type: 'mcq', isActive: true, status: 'verified',
+      stream,
+      subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, isHardMode: isHardMode ? true : { $ne: true },
+      type: 'mcq', isActive: true, status: 'verified',
     });
 
-    // 🚨 MAGIC: Sirf 4 questions ready hone par hi test start karo!
-    const minStartCount = 4; 
+    const minStartCount = Math.max(1, Math.min(3, targetCount));
 
     const job = await queueOrGetChapterJob({
-      boardCode, classLevel, subjectCode, chapterNumber, medium, isHardMode, targetCount
+      boardCode,
+      classLevel,
+      stream,
+      subjectCode,
+      chapterNumber,
+      medium,
+      isHardMode,
+      targetCount,
+      marksPerMcq: pattern.marksPerMcq,
+      targetShortCount,
+      shortMarks: pattern.shortMarks,
+      targetLongCount,
+      longMarks: pattern.longMarks,
     });
 
     if (existingCount >= minStartCount) {
       return res.json({ 
         success: true, 
         ready: true, 
-        isGenerating: job.status === 'running', 
+        generationJobId: job._id,
+        isGenerating: job.status !== 'completed',
         count: existingCount, 
-        message: `Test is ready! Generating more in background.` 
+        minStartCount,
+        pattern: {
+          mcqCount: targetCount,
+          attemptLimit: pattern.attemptLimit,
+          marksPerMcq: pattern.marksPerMcq,
+          shortCount: targetShortCount,
+          shortMarks: pattern.shortMarks,
+          longCount: targetLongCount,
+          longMarks: pattern.longMarks,
+          durationMinutes: pattern.durationMinutes,
+          totalMarks: pattern.totalMarks,
+        },
+        message: 'Your exam is ready. Remaining questions are being generated in the background.',
       });
     }
 
     res.json({
       success: true, ready: false, isGenerating: true,
       jobId: job._id, jobKey: job.jobKey, status: job.status, progressPercent: job.progressPercent,
-      progressMessage: `Generating first questions... (${existingCount}/${minStartCount})`, availableCount: existingCount,
+      progressMessage: `Generating first questions... (${existingCount}/${minStartCount})`,
+      availableCount: existingCount,
+      verifiedCount: job.verifiedCount,
+      minStartCount,
+      pattern: {
+        mcqCount: targetCount,
+        attemptLimit: pattern.attemptLimit,
+        marksPerMcq: pattern.marksPerMcq,
+        shortCount: targetShortCount,
+        shortMarks: pattern.shortMarks,
+        longCount: targetLongCount,
+        longMarks: pattern.longMarks,
+        durationMinutes: pattern.durationMinutes,
+        totalMarks: pattern.totalMarks,
+      },
     });
   } catch (err) {
     console.error('prepareChapterQuestions error:', err);
@@ -314,11 +366,346 @@ export async function getGenerationJobStatus(req, res) {
         id: job._id, status: job.status, progressPercent: job.progressPercent,
         progressMessage: job.progressMessage, verifiedCount: job.verifiedCount,
         targetCount: job.targetCount, error: job.error, completedAt: job.completedAt,
+        targetShortCount: job.targetShortCount, verifiedShortCount: job.verifiedShortCount,
+        targetLongCount: job.targetLongCount, verifiedLongCount: job.verifiedLongCount,
       },
     });
   } catch (err) {
     console.error('getGenerationJobStatus error:', err);
     res.status(500).json({ error: 'Failed to fetch job status' });
+  }
+}
+
+/* --------------------------------------------------------------------------
+   GET /api/tests/:attemptId/state
+   -------------------------------------------------------------------------- */
+export async function getAttemptState(req, res) {
+  try {
+    const { attemptId } = req.params;
+    const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id }).lean();
+    if (!attempt) return res.status(404).json({ error: 'Test attempt not found' });
+
+    // Fetch questions in stored order
+    const questions = await Question.find({ _id: { $in: attempt.questionIds } }).select('-correctOption -explanation').lean();
+    const idOrder = new Map(attempt.questionIds.map((id, idx) => [id.toString(), idx]));
+    questions.sort((a, b) => (idOrder.get(a._id.toString()) ?? 0) - (idOrder.get(b._id.toString()) ?? 0));
+
+    const mcqQuestions = questions.filter(q => q.type === 'mcq');
+    const subjectiveQuestions = questions.filter(q => q.type === 'short' || q.type === 'long');
+    const sourcePaper = attempt.testType === 'full_paper'
+      ? await getPaperForTest(attempt.paperId)
+      : null;
+
+    // Build answers map
+    const answers = (attempt.answers || [])
+      .filter(a => a.questionId && a.selectedOption)
+      .map(a => ({
+        questionId: a.questionId.toString(),
+        selectedOption: a.selectedOption,
+        isSkipped: a.isSkipped,
+        firstAnsweredAt: a.firstAnsweredAt,
+        countsTowardLimit: a.countsTowardLimit,
+      }));
+
+    res.json({
+      success: true,
+      attemptId: attempt._id,
+      testType: attempt.testType,
+      subjectName: attempt.subjectName,
+      chapterTitle: attempt.chapterTitle,
+      medium: attempt.medium,
+      generationJobId: attempt.generationJobId,
+      deadlineAt: attempt.deadlineAt,
+      subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+      timeLimitMs: attempt.timeLimitMs,
+      startedAt: attempt.startedAt,
+      finishedAt: attempt.finishedAt,
+      status: attempt.status,
+      subjectiveRequired: attempt.subjectiveRequired,
+      subjectiveSubmissionId: attempt.subjectiveSubmissionId,
+      currentQuestionIndex: attempt.currentQuestionIndex,
+      currentSection: attempt.currentSection,
+      boardPatternSnapshot: attempt.boardPatternSnapshot,
+      questions: mcqQuestions.map((q, idx) => ({ index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber })),
+      subjectiveQuestions: sourcePaper
+        ? sourcePaper.questions
+          .filter(q => q.questionType === 'subjective')
+          .map(q => ({
+            questionNumber: q.questionNumber,
+            questionText: q.questionText,
+            hindiQuestionText: q.hindiQuestionText,
+            marks: q.marks,
+          }))
+        : subjectiveQuestions.map((q, idx) => ({
+          id: q._id,
+          questionNumber: idx + 1,
+          type: q.type,
+          questionText: q.questionText,
+          hindiQuestionText: q.hindiQuestionText,
+          difficulty: q.difficulty,
+          subtopic: q.subtopic,
+          marks: q.marks || 2,
+          chapterNumber: q.chapterNumber,
+        })),
+      answers,
+    });
+  } catch (err) {
+    console.error('getAttemptState error:', err);
+    res.status(500).json({ error: 'Failed to fetch attempt state' });
+  }
+}
+
+export async function syncAttemptQuestions(req, res) {
+  try {
+    const attempt = await TestAttempt.findOne({
+      _id: req.params.attemptId,
+      userId: req.user._id,
+      status: 'in_progress',
+    });
+    if (!attempt) return res.status(404).json({ error: 'Active test attempt not found' });
+    if (!attempt.generationJobId || attempt.testType === 'full_paper') {
+      return res.json({ success: true, addedQuestions: [], addedSubjectiveQuestions: [], generationJob: null });
+    }
+
+    const job = await GenerationJob.findOne({
+      _id: attempt.generationJobId,
+      boardCode: attempt.boardCode,
+      classLevel: attempt.classLevel,
+      stream: attempt.stream || null,
+      subjectCode: attempt.subjectCode,
+      chapterNumber: attempt.chapterNumber,
+      medium: attempt.medium,
+      isHardMode: attempt.isHardMode,
+    }).lean();
+    if (!job) return res.status(409).json({ error: 'Question generation job does not match this test attempt' });
+
+    const existingIds = new Set(attempt.questionIds.map((id) => id.toString()));
+    const existingQuestions = await Question.find({ _id: { $in: attempt.questionIds } })
+      .select('_id type')
+      .lean();
+    const candidateQuestions = await Question.find({
+        boardCode: job.boardCode,
+        classLevel: job.classLevel,
+        stream: job.stream || null,
+        subjectCode: job.subjectCode,
+        chapterNumber: job.chapterNumber,
+        medium: job.medium,
+        isHardMode: job.isHardMode ? true : { $ne: true },
+        type: { $in: ['mcq', 'short', 'long'] },
+        isActive: true,
+        status: 'verified',
+      })
+        .select('-correctOption -explanation')
+        .sort({ createdAt: 1, _id: 1 })
+        .lean();
+    const existingCounts = {
+      mcq: existingQuestions.filter((question) => question.type === 'mcq').length,
+      short: existingQuestions.filter((question) => question.type === 'short').length,
+      long: existingQuestions.filter((question) => question.type === 'long').length,
+    };
+    const stageTargets = {
+      mcq: Number(job.targetCount) || 0,
+      short: Number(job.targetShortCount) || 0,
+      long: Number(job.targetLongCount) || 0,
+    };
+    const addedByType = { mcq: [], short: [], long: [] };
+    for (const type of ['mcq', 'short', 'long']) {
+      const remaining = Math.max(0, stageTargets[type] - existingCounts[type]);
+      addedByType[type] = candidateQuestions
+        .filter((question) => question.type === type && !existingIds.has(question._id.toString()))
+        .slice(0, remaining);
+      addedByType[type].forEach((question) => existingIds.add(question._id.toString()));
+    }
+    const addedQuestions = addedByType.mcq;
+    const addedSubjectiveQuestions = [...addedByType.short, ...addedByType.long];
+    const newQuestions = [...addedQuestions, ...addedSubjectiveQuestions];
+
+    if (newQuestions.length) {
+      const updatedAttempt = await TestAttempt.findOneAndUpdate(
+        { _id: attempt._id, userId: req.user._id, status: 'in_progress' },
+        { $addToSet: { questionIds: { $each: newQuestions.map((question) => question._id) } } },
+        { new: true }
+      );
+      if (!updatedAttempt) return res.status(404).json({ error: 'Active test attempt not found' });
+
+      const allAttemptQuestions = await Question.find({ _id: { $in: updatedAttempt.questionIds } })
+        .select('_id type')
+        .lean();
+      const totalQuestions = allAttemptQuestions.filter((question) => question.type === 'mcq').length;
+      const subjectiveRequired = allAttemptQuestions.some((question) => question.type === 'short' || question.type === 'long');
+      if (updatedAttempt.totalQuestions !== totalQuestions) {
+        updatedAttempt.totalQuestions = totalQuestions;
+      }
+      if (subjectiveRequired && !updatedAttempt.subjectiveRequired) updatedAttempt.subjectiveRequired = true;
+      await updatedAttempt.save();
+    }
+
+    if (job.status === 'completed' && attempt.subjectiveRequired && !attempt.subjectiveUploadDeadlineAt) {
+      const uploadWindowBase = Math.max(
+        attempt.deadlineAt?.getTime() || 0,
+        job.completedAt?.getTime() || Date.now(),
+      );
+      attempt.subjectiveUploadDeadlineAt = new Date(uploadWindowBase + ANSWER_SHEET_UPLOAD_GRACE_MS);
+      await attempt.save();
+    }
+
+    res.json({
+      success: true,
+      addedQuestions: addedQuestions.map((question) => ({
+        id: question._id,
+        questionText: question.questionText,
+        hindiQuestionText: question.hindiQuestionText,
+        options: question.options,
+        difficulty: question.difficulty,
+        subtopic: question.subtopic,
+        marks: question.marks || 1,
+        chapterNumber: question.chapterNumber,
+      })),
+      addedSubjectiveQuestions: addedSubjectiveQuestions.map((question) => ({
+        id: question._id,
+        questionNumber: question.questionNumber,
+        type: question.type,
+        questionText: question.questionText,
+        hindiQuestionText: question.hindiQuestionText,
+        marks: question.marks,
+        chapterNumber: question.chapterNumber,
+      })),
+      generationJob: {
+        id: job._id,
+        status: job.status,
+        generationStage: job.generationStage,
+        progressPercent: job.progressPercent,
+        progressMessage: job.progressMessage,
+        verifiedCount: job.verifiedCount,
+        targetCount: job.targetCount,
+        verifiedShortCount: job.verifiedShortCount,
+        targetShortCount: job.targetShortCount,
+        verifiedLongCount: job.verifiedLongCount,
+        targetLongCount: job.targetLongCount,
+        error: job.error,
+      },
+      subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+    });
+  } catch (err) {
+    console.error('syncAttemptQuestions error:', err);
+    res.status(500).json({ error: 'Failed to sync generated questions' });
+  }
+}
+
+export async function retryAttemptGeneration(req, res) {
+  try {
+    const attempt = await TestAttempt.findOne({
+      _id: req.params.attemptId,
+      userId: req.user._id,
+      status: 'in_progress',
+    });
+    if (!attempt) return res.status(404).json({ error: 'Active test attempt not found' });
+    if (attempt.testType === 'full_paper' || !attempt.generationJobId) {
+      return res.status(409).json({ error: 'This attempt has no retryable chapter-generation job' });
+    }
+
+    const jobScope = {
+      _id: attempt.generationJobId,
+      boardCode: attempt.boardCode,
+      classLevel: attempt.classLevel,
+      stream: attempt.stream || null,
+      subjectCode: attempt.subjectCode,
+      chapterNumber: attempt.chapterNumber,
+      medium: attempt.medium,
+      isHardMode: !!attempt.isHardMode,
+    };
+    const job = await GenerationJob.findOne(jobScope).lean();
+    if (!job) return res.status(409).json({ error: 'Question generation job does not match this test attempt' });
+
+    if (job.status === 'failed') {
+      const restartedJob = await GenerationJob.findOneAndUpdate(
+        { ...jobScope, status: 'failed' },
+        {
+          $set: {
+            status: 'queued',
+            generationStage: 'mcq',
+            progressPercent: 0,
+            progressMessage: 'Retry queued. Existing questions and answers will be preserved.',
+            workerLeaseUntil: null,
+            error: null,
+            startedAt: null,
+            completedAt: null,
+          },
+        },
+        { new: true },
+      );
+      if (restartedJob) {
+        return res.json({
+          success: true,
+          jobId: restartedJob._id,
+          status: restartedJob.status,
+          progressMessage: restartedJob.progressMessage,
+        });
+      }
+
+      const latestJob = await GenerationJob.findOne(jobScope).lean();
+      if (!latestJob || latestJob.status === 'failed') {
+        return res.status(409).json({ error: 'Could not restart question generation. Please retry.' });
+      }
+      return res.json({
+        success: true,
+        jobId: latestJob._id,
+        status: latestJob.status,
+        progressMessage: latestJob.progressMessage,
+      });
+    }
+
+    return res.json({
+      success: true,
+      jobId: job._id,
+      status: job.status,
+      progressMessage: job.progressMessage,
+    });
+  } catch (err) {
+    console.error('retryAttemptGeneration error:', err);
+    res.status(500).json({ error: 'Failed to retry question generation' });
+  }
+}
+
+export async function updateAttemptState(req, res) {
+  try {
+    const { attemptId } = req.params;
+    const { currentQuestionIndex, currentSection } = req.body;
+    const attempt = await TestAttempt.findOne({
+      _id: attemptId,
+      userId: req.user._id,
+      status: 'in_progress',
+    });
+    if (!attempt) return res.status(404).json({ error: 'Active test attempt not found' });
+
+    if (currentQuestionIndex === undefined && currentSection === undefined) {
+      return res.status(400).json({ error: 'At least one attempt state field is required' });
+    }
+
+    if (currentQuestionIndex !== undefined) {
+      const index = Number(currentQuestionIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= attempt.totalQuestions) {
+        return res.status(400).json({ error: 'Invalid current question index' });
+      }
+      attempt.currentQuestionIndex = index;
+    }
+
+    if (currentSection !== undefined) {
+      if (!['mcq', 'subjective'].includes(currentSection)) {
+        return res.status(400).json({ error: 'Invalid current section' });
+      }
+      attempt.currentSection = currentSection;
+    }
+
+    await attempt.save();
+    res.json({
+      success: true,
+      currentQuestionIndex: attempt.currentQuestionIndex,
+      currentSection: attempt.currentSection,
+    });
+  } catch (err) {
+    console.error('updateAttemptState error:', err);
+    res.status(500).json({ error: 'Failed to save attempt state' });
   }
 }
 
@@ -338,7 +725,20 @@ export async function getChapterPracticeQuestions(req, res) {
     if (!subjectCode || isNaN(chapterNumber)) return res.status(400).json({ error: 'subjectCode query and valid chapterNumber param required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), chapterNumber, medium, isActive: true, status: 'verified' };
+    const stream = req.query.stream || studentProf.stream
+      ? String(req.query.stream || studentProf.stream).trim().toLowerCase()
+      : null;
+    const isHardMode = req.query.isHardMode === 'true';
+    const query = {
+      classLevel: String(classLevel),
+      stream,
+      subjectCode: subjectCode.toLowerCase(),
+      chapterNumber,
+      medium,
+      isHardMode: isHardMode ? true : { $ne: true },
+      isActive: true,
+      status: 'verified',
+    };
 
     let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).select('-correctOption -explanation').limit(limit).lean();
 
@@ -402,105 +802,246 @@ export async function flagQuestion(req, res) {
 export async function startTest(req, res) {
   try {
     const studentProf = req.user?.studentProfile || {};
-    const { subjectCode, chapterNumber, testType = 'chapter_practice', isHardMode = false, questionLimit } = req.body;
+    const { subjectCode, chapterNumber, testType = 'chapter_practice', isHardMode = false, paperId, generationJobId } = req.body;
 
     const boardCode = req.body.boardCode || studentProf.board || 'bseb';
     const classLevel = req.body.classLevel || studentProf.classLevel || '10';
+    const stream = (req.body.stream || studentProf.stream)
+      ? String(req.body.stream || studentProf.stream).trim().toLowerCase()
+      : null;
     const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
 
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode is required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
-    // 🚨 1. RESUME LOGIC + AUTO-UPDATE 🚨
-    let attempt = await TestAttempt.findOne({
-      userId: req.user._id, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
-      subjectCode: subjectCode.toLowerCase(), chapterNumber: chapterNumber ? Number(chapterNumber) : null,
-      medium, status: 'in_progress'
-    });
+    let linkedGenerationJob = null;
+    if (generationJobId) {
+      if (!chapterNumber || !/^[\da-f]{24}$/i.test(String(generationJobId))) {
+        return res.status(400).json({ error: 'Invalid question generation job' });
+      }
+      linkedGenerationJob = await GenerationJob.findOne({
+        _id: generationJobId,
+        boardCode: boardCode.toLowerCase(),
+        classLevel: String(classLevel),
+        stream,
+        subjectCode: subjectCode.toLowerCase(),
+        chapterNumber: Number(chapterNumber),
+        medium,
+        isHardMode: !!isHardMode,
+      }).lean();
+      if (!linkedGenerationJob) {
+        return res.status(400).json({ error: 'Question generation job does not match this test' });
+      }
+    }
+
+    // Get board pattern for this attempt
+    const config = await getResolvedBoardConfig(boardCode);
+    const pattern = config.paperPattern || {};
+
+    // 🚨 1. RESUME LOGIC - Exact match on attempt identity 🚨
+    const attemptQuery = {
+      userId: req.user._id,
+      boardCode: boardCode.toLowerCase(),
+      classLevel: String(classLevel),
+      stream,
+      subjectCode: subjectCode.toLowerCase(),
+      chapterNumber: chapterNumber ? Number(chapterNumber) : null,
+      medium,
+      testType,
+      isHardMode: !!isHardMode,
+      status: 'in_progress',
+    };
+    attemptQuery.paperId = paperId || null;
+
+    let attempt = await TestAttempt.findOne(attemptQuery);
 
     if (attempt) {
-      // Background mein naye questions aaye honge, unhe fetch karo
-      const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), medium, isActive: true, status: 'verified' };
-      if (chapterNumber) query.chapterNumber = Number(chapterNumber);
-      
-      let freshQuestions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).lean();
-      
-      // Agar naye questions mile hain, toh attempt ko update karo
-      if (freshQuestions.length > attempt.questionIds.length) {
-        attempt.questionIds = freshQuestions.map(q => q._id);
-        attempt.totalQuestions = freshQuestions.filter(q => q.type !== 'subjective').length;
+      if (!attempt.generationJobId && linkedGenerationJob) {
+        attempt.generationJobId = linkedGenerationJob._id;
         await attempt.save();
-      } else {
-        // Warna purane wale hi utha lo
-        freshQuestions = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
       }
 
-      const mcqQuestions = freshQuestions.filter(q => q.type !== 'subjective');
-      const subjectiveQuestions = freshQuestions.filter(q => q.type === 'subjective');
+      let freshQuestions = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
+      // Sort by the order in attempt.questionIds
+      const idOrder = new Map(attempt.questionIds.map((id, idx) => [id.toString(), idx]));
+      freshQuestions.sort((a, b) => (idOrder.get(a._id.toString()) ?? 0) - (idOrder.get(b._id.toString()) ?? 0));
+
+      const currentMcqQuestions = freshQuestions.filter((question) => question.type === 'mcq');
+      const subjectiveQuestions = freshQuestions.filter((question) => question.type === 'short' || question.type === 'long');
+      attempt.totalQuestions = currentMcqQuestions.length;
+      if (subjectiveQuestions.length) attempt.subjectiveRequired = true;
+      await attempt.save();
 
       return res.json({
-        success: true, attemptId: attempt._id, testType: attempt.testType, 
-        subjectName: attempt.subjectName, chapterTitle: attempt.chapterTitle,
-        totalQuestions: mcqQuestions.length, medium: attempt.medium, 
-        questions: mcqQuestions.map((q, idx) => ({ index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber })),
-        subjectiveQuestions: subjectiveQuestions.map((q) => ({ id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber })),
-        answers: attempt.answers || []
+        success: true, 
+        attemptId: attempt._id, 
+        testType: attempt.testType, 
+        subjectName: attempt.subjectName, 
+        chapterTitle: attempt.chapterTitle,
+        totalQuestions: currentMcqQuestions.length,
+        medium: attempt.medium,
+        generationJobId: attempt.generationJobId,
+        deadlineAt: attempt.deadlineAt,
+        subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+        subjectiveRequired: attempt.subjectiveRequired,
+        subjectiveSubmissionId: attempt.subjectiveSubmissionId,
+        timeLimitMs: attempt.timeLimitMs,
+        currentQuestionIndex: attempt.currentQuestionIndex,
+        currentSection: attempt.currentSection,
+        boardPatternSnapshot: attempt.boardPatternSnapshot,
+        questions: currentMcqQuestions.map((q, idx) => ({ index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber })),
+        subjectiveQuestions: subjectiveQuestions.map((q, idx) => ({
+          id: q._id,
+          questionNumber: idx + 1,
+          type: q.type,
+          questionText: q.questionText,
+          hindiQuestionText: q.hindiQuestionText,
+          difficulty: q.difficulty,
+          subtopic: q.subtopic,
+          marks: q.marks,
+          chapterNumber: q.chapterNumber,
+        })),
+        answers: (attempt.answers || [])
+          .filter((answer) => answer.questionId && answer.selectedOption)
+          .map((answer) => ({
+            questionId: answer.questionId.toString(),
+            selectedOption: answer.selectedOption,
+            isSkipped: answer.isSkipped,
+            firstAnsweredAt: answer.firstAnsweredAt,
+            countsTowardLimit: answer.countsTowardLimit,
+          }))
       });
     }
 
     // 🚨 2. NAYA TEST LOGIC 🚨
-    const query = { classLevel: String(classLevel), subjectCode: subjectCode.toLowerCase(), medium, isActive: true, status: 'verified' };
+    const query = {
+      classLevel: String(classLevel),
+      stream,
+      subjectCode: subjectCode.toLowerCase(),
+      medium,
+      isHardMode: isHardMode ? true : { $ne: true },
+      isActive: true,
+      status: 'verified',
+    };
     if (chapterNumber) query.chapterNumber = Number(chapterNumber);
 
     let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).lean();
-    if (questions.length === 0 && boardCode.toLowerCase() !== 'ncert_default') {
+    if (!linkedGenerationJob && questions.length === 0 && boardCode.toLowerCase() !== 'ncert_default') {
       questions = await Question.find({ boardCode: 'ncert_default', ...query }).lean();
     }
     if (questions.length === 0) return res.status(404).json({ error: 'No questions available.' });
 
-    // Shuffle
-    for (let i = questions.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [questions[i], questions[j]] = [questions[j], questions[i]];
-    }
-
-    let finalLimit = Number(questionLimit);
-    if (!finalLimit) {
-       try {
-         const config = await getResolvedBoardConfig(boardCode);
-         const pattern = config.paperPattern || {};
-         finalLimit = (pattern.mcq || 0) + (pattern.twoMarks || 0) + (pattern.fiveMarks || 0);
-       } catch (e) { /* ignore */ }
-    }
-    questions = questions.slice(0, Math.min(finalLimit || 20, questions.length));
-
-    const mcqQuestions = questions.filter(q => q.type !== 'subjective');
-    const subjectiveQuestions = questions.filter(q => q.type === 'subjective');
+    const linkedJob = linkedGenerationJob
+      ? await GenerationJob.findById(linkedGenerationJob._id).lean()
+      : null;
+    const configuredTargets = {
+      mcq: Math.max(0, Number(linkedJob?.targetCount ?? pattern.mcqCount) || 0),
+      short: Math.max(0, Number(linkedJob?.targetShortCount ?? (pattern.hasShortAnswer ? pattern.shortCount : 0)) || 0),
+      long: Math.max(0, Number(linkedJob?.targetLongCount ?? (pattern.hasLongAnswer ? pattern.longCount : 0)) || 0),
+    };
+    const questionTargets = {
+      mcq: configuredTargets.mcq || questions.filter((question) => question.type === 'mcq').length,
+      short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
+      long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
+    };
+    const shuffle = (items) => {
+      const result = [...items];
+      for (let index = result.length - 1; index > 0; index--) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+      }
+      return result;
+    };
+    const mcqQuestions = shuffle(questions.filter((question) => question.type === 'mcq'))
+      .slice(0, questionTargets.mcq);
+    const shortQuestions = shuffle(questions.filter((question) => question.type === 'short'))
+      .slice(0, questionTargets.short);
+    const longQuestions = shuffle(questions.filter((question) => question.type === 'long'))
+      .slice(0, questionTargets.long);
+    const subjectiveQuestions = [...shortQuestions, ...longQuestions];
+    questions = [...mcqQuestions, ...subjectiveQuestions];
 
     let subjectName = subjectCode;
     let chapterTitle = chapterNumber ? `Chapter ${chapterNumber}` : 'Full Paper';
     try {
-      const config = await getResolvedBoardConfig(boardCode);
-      const found = getSubjectsForClass(config, classLevel, studentProf.stream).find(s => s.code === subjectCode);
+      const found = getSubjectsForClass(config, classLevel, stream).find(s => s.code === subjectCode);
       if (found) subjectName = found.name;
       if (chapterNumber) {
-        const chapter = await getChapterForMedium({ boardCode, classLevel, subjectCode, chapterNumber, stream: studentProf.stream, medium });
+        const chapter = await getChapterForMedium({ boardCode, classLevel, subjectCode, chapterNumber, stream, medium });
         if (chapter) chapterTitle = chapterTitleForMedium(chapter, medium) || chapterTitle;
       }
     } catch (e) { /* ignore */ }
 
+    // Calculate deadline for exam mode
+    const durationMinutes = pattern.durationMinutes || 0;
+    const startedAt = new Date();
+    const deadlineAt = durationMinutes > 0 ? new Date(startedAt.getTime() + durationMinutes * 60 * 1000) : null;
+    const timeLimitMs = durationMinutes > 0 ? durationMinutes * 60 * 1000 : 0;
+
+    // Board pattern snapshot
+    const boardPatternSnapshot = {
+      mcqCount: pattern.mcqCount,
+      attemptLimit: pattern.attemptLimit,
+      marksPerMcq: pattern.marksPerMcq,
+      durationMinutes: pattern.durationMinutes,
+      negativeMarking: pattern.negativeMarking,
+      optionsCount: pattern.optionsCount,
+      hasShortAnswer: pattern.hasShortAnswer,
+      shortCount: pattern.shortCount,
+      shortMarks: pattern.shortMarks,
+      shortAttemptLimit: pattern.shortAttemptLimit,
+      hasLongAnswer: pattern.hasLongAnswer,
+      longCount: pattern.longCount,
+      longMarks: pattern.longMarks,
+      longAttemptLimit: pattern.longAttemptLimit,
+      totalMarks: pattern.totalMarks,
+    };
+
     attempt = await TestAttempt.create({
       userId: req.user._id, testType, boardCode: boardCode.toLowerCase(), classLevel: String(classLevel),
+      stream,
       subjectCode: subjectCode.toLowerCase(), subjectName, chapterNumber: chapterNumber ? Number(chapterNumber) : null,
       chapterTitle, medium, questionIds: questions.map((q) => q._id), totalQuestions: mcqQuestions.length, 
-      status: 'in_progress', startedAt: new Date(), isHardMode: !!isHardMode,
+      status: 'in_progress', startedAt, isHardMode: !!isHardMode,
+      deadlineAt, timeLimitMs, boardPatternSnapshot,
+      paperId: paperId || null,
+      generationJobId: linkedGenerationJob?._id || null,
+      subjectiveUploadDeadlineAt: linkedGenerationJob?.status === 'completed'
+        ? new Date(Math.max(
+          deadlineAt?.getTime() || 0,
+          linkedGenerationJob.completedAt?.getTime() || Date.now(),
+        ) + ANSWER_SHEET_UPLOAD_GRACE_MS)
+        : null,
+      subjectiveRequired: questionTargets.short > 0 || questionTargets.long > 0,
+      subjectiveScore: {
+        totalMarks:
+          Math.min(questionTargets.short, Number(pattern.shortAttemptLimit) || questionTargets.short) * (Number(pattern.shortMarks) || 0)
+          + Math.min(questionTargets.long, Number(pattern.longAttemptLimit) || questionTargets.long) * (Number(pattern.longMarks) || 0),
+        obtainedMarks: 0,
+        percentage: 0,
+      },
     });
 
     res.json({
       success: true, attemptId: attempt._id, testType, subjectName, chapterTitle,
-      totalQuestions: mcqQuestions.length, medium, 
+      totalQuestions: mcqQuestions.length, medium, generationJobId: attempt.generationJobId,
+      deadlineAt, timeLimitMs,
+      subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+      currentQuestionIndex: 0,
+      currentSection: 'mcq',
+      boardPatternSnapshot,
       questions: mcqQuestions.map((q, idx) => ({ index: idx, id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 1, chapterNumber: q.chapterNumber })),
-      subjectiveQuestions: subjectiveQuestions.map((q) => ({ id: q._id, questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks || 2, chapterNumber: q.chapterNumber })),
+      subjectiveQuestions: subjectiveQuestions.map((q, idx) => ({
+        id: q._id,
+        questionNumber: idx + 1,
+        type: q.type,
+        questionText: q.questionText,
+        hindiQuestionText: q.hindiQuestionText,
+        difficulty: q.difficulty,
+        subtopic: q.subtopic,
+        marks: q.marks,
+        chapterNumber: q.chapterNumber,
+      })),
       answers: []
     });
   } catch (err) {
@@ -523,27 +1064,59 @@ export async function submitAnswer(req, res) {
     if (!attempt) return res.status(404).json({ error: 'Test attempt not found' });
     if (!attempt.questionIds.some((qid) => qid.toString() === questionId)) return res.status(400).json({ error: 'Invalid question' });
 
+    // Check server-authoritative deadline
+    if (attempt.deadlineAt && new Date() > attempt.deadlineAt) {
+      return res.status(400).json({ error: 'Exam time has expired' });
+    }
+
     const question = await Question.findById(questionId).select('+correctOption').lean();
     if (!question) return res.status(404).json({ error: 'Question not found' });
+    if (question.type !== 'mcq') return res.status(400).json({ error: 'Written answers must be submitted on the answer sheet' });
+    const availableOptions = new Set((question.options || []).map((option) => String(option.key).toUpperCase()));
+    if (!availableOptions.has(String(selectedOption).toUpperCase())) {
+      return res.status(400).json({ error: 'selectedOption must match one of the question options' });
+    }
 
     const isCorrect = String(selectedOption).toUpperCase() === String(question.correctOption).toUpperCase();
     const existingIdx = attempt.answers.findIndex((a) => a.questionId.toString() === questionId);
 
+    const now = new Date();
     const answerEntry = {
-      questionId: question._id, selectedOption: String(selectedOption).toUpperCase(), correctOption: String(question.correctOption).toUpperCase(),
-      isCorrect, isSkipped: false, timeTakenMs: timeTakenMs || 0, marks: question.marks || 1,
-      marksAwarded: isCorrect ? (question.marks || 1) : 0, difficulty: question.difficulty || 'Medium',
-      chapterNumber: question.chapterNumber, subtopic: question.subtopic || '',
+      questionId: question._id, 
+      selectedOption: String(selectedOption).toUpperCase(), 
+      correctOption: String(question.correctOption).toUpperCase(),
+      isCorrect, 
+      isSkipped: false, 
+      timeTakenMs: timeTakenMs || 0, 
+      marks: question.marks || 1,
+      marksAwarded: isCorrect ? (question.marks || 1) : 0, 
+      difficulty: question.difficulty || 'Medium',
+      chapterNumber: question.chapterNumber, 
+      subtopic: question.subtopic || '',
+      firstAnsweredAt: existingIdx >= 0 ? attempt.answers[existingIdx].firstAnsweredAt : now,
+      countsTowardLimit: true, // Will be adjusted at finish based on attempt limit
     };
 
     if (existingIdx >= 0) attempt.answers[existingIdx] = answerEntry;
     else attempt.answers.push(answerEntry);
 
+    // Update resume state
+    const mcqIds = await Question.find({
+      _id: { $in: attempt.questionIds },
+      type: 'mcq',
+    }).select('_id').lean();
+    const mcqOrder = new Map(attempt.questionIds.map((id, index) => [id.toString(), index]));
+    mcqIds.sort((a, b) => mcqOrder.get(a._id.toString()) - mcqOrder.get(b._id.toString()));
+    const qIndex = mcqIds.findIndex((item) => item._id.toString() === questionId);
+    if (qIndex >= 0) attempt.currentQuestionIndex = qIndex;
+    attempt.currentSection = 'mcq';
+
     await attempt.save();
 
     res.json({
-      success: true, isCorrect, correctOption: String(question.correctOption).toUpperCase(),
-      explanation: question.explanation || '', answeredCount: attempt.answers.length, totalQuestions: attempt.totalQuestions,
+      success: true,
+      answeredCount: attempt.answers.filter((answer) => !answer.isSkipped).length,
+      totalQuestions: attempt.totalQuestions,
     });
   } catch (err) {
     console.error('submitAnswer error:', err);
@@ -563,27 +1136,110 @@ export async function finishTest(req, res) {
     if (!attempt) return res.status(404).json({ error: 'Test attempt not found' });
     if (attempt.status === 'completed') return res.json({ success: true, message: 'Test already completed', attemptId: attempt._id });
 
+    if (attempt.generationJobId) {
+      const job = await GenerationJob.findById(attempt.generationJobId).lean();
+      if (!job) return res.status(409).json({ error: 'The exam question-generation job is missing; contact support before submitting this attempt' });
+      if (job.status === 'failed') {
+        return res.status(409).json({ error: 'Question generation failed. Retry generation before submitting this exam.' });
+      }
+      if (job.status !== 'completed') {
+        return res.status(409).json({ error: 'The full exam paper is still being generated. You can continue answering and submit once generation finishes.' });
+      }
+
+      const currentQuestions = await Question.find({ _id: { $in: attempt.questionIds } })
+        .select('_id type')
+        .lean();
+      const currentCounts = {
+        mcq: currentQuestions.filter((question) => question.type === 'mcq').length,
+        short: currentQuestions.filter((question) => question.type === 'short').length,
+        long: currentQuestions.filter((question) => question.type === 'long').length,
+      };
+      const targets = {
+        mcq: Number(job.targetCount) || 0,
+        short: Number(job.targetShortCount) || 0,
+        long: Number(job.targetLongCount) || 0,
+      };
+      const existingIds = new Set(attempt.questionIds.map((id) => id.toString()));
+      const candidates = await Question.find({
+        boardCode: job.boardCode,
+        classLevel: job.classLevel,
+        stream: job.stream || null,
+        subjectCode: job.subjectCode,
+        chapterNumber: job.chapterNumber,
+        medium: job.medium,
+        isHardMode: job.isHardMode ? true : { $ne: true },
+        type: { $in: ['mcq', 'short', 'long'] },
+        isActive: true,
+        status: 'verified',
+      }).select('_id type').sort({ createdAt: 1, _id: 1 }).lean();
+      for (const type of ['mcq', 'short', 'long']) {
+        const remaining = Math.max(0, targets[type] - currentCounts[type]);
+        const missingIds = candidates
+          .filter((question) => question.type === type && !existingIds.has(question._id.toString()))
+          .slice(0, remaining)
+          .map((question) => question._id);
+        for (const questionId of missingIds) existingIds.add(questionId.toString());
+        attempt.questionIds.push(...missingIds);
+      }
+    }
+
     const answeredIds = new Set(attempt.answers.map((a) => a.questionId.toString()));
     const allQuestions = await Question.find({ _id: { $in: attempt.questionIds } }).select('+correctOption').lean();
+    const objectiveQuestions = allQuestions.filter((question) => question.type === 'mcq');
+    attempt.totalQuestions = objectiveQuestions.length;
 
-    for (const q of allQuestions) {
+    for (const q of objectiveQuestions) {
       if (!answeredIds.has(q._id.toString())) {
         attempt.answers.push({
-          questionId: q._id, selectedOption: null, correctOption: String(q.correctOption).toUpperCase(),
+          questionId: q._id, selectedOption: null, correctOption: String(q.correctOption || '').toUpperCase(),
           isCorrect: false, isSkipped: true, timeTakenMs: 0, marks: q.marks || 1, marksAwarded: 0,
           difficulty: q.difficulty || 'Medium', chapterNumber: q.chapterNumber, subtopic: q.subtopic || '',
+          firstAnsweredAt: null,
+          countsTowardLimit: false,
         });
       }
     }
 
-    let correct = 0, incorrect = 0, skipped = 0, totalMarks = 0, obtainedMarks = 0;
+    // Apply board attempt limits from snapshot
+    const snapshot = attempt.boardPatternSnapshot || {};
+    const mcqAttemptLimit = Number(snapshot.attemptLimit) > 0
+      ? Number(snapshot.attemptLimit)
+      : objectiveQuestions.length;
+    const mcqCount = Number(snapshot.mcqCount) > 0 ? Number(snapshot.mcqCount) : objectiveQuestions.length;
+    const scoredQuestionCount = Math.min(mcqAttemptLimit, mcqCount, objectiveQuestions.length);
+    const mcqAnswers = attempt.answers.filter((answer) =>
+      objectiveQuestions.some((question) => question._id.toString() === answer.questionId.toString()),
+    );
+    const answeredMcq = mcqAnswers
+      .filter((answer) => answer.firstAnsweredAt)
+      .sort((a, b) => new Date(a.firstAnsweredAt) - new Date(b.firstAnsweredAt));
+    const eligibleAnswerIds = new Set(
+      answeredMcq.slice(0, scoredQuestionCount).map((answer) => answer.questionId.toString()),
+    );
+    for (const answer of mcqAnswers) {
+      answer.countsTowardLimit = eligibleAnswerIds.has(answer.questionId.toString());
+    }
+
+    let correct = 0, incorrect = 0, skipped = Math.max(0, scoredQuestionCount - eligibleAnswerIds.size);
+    let totalMarks = scoredQuestionCount * (Number(snapshot.marksPerMcq) || 1);
+    let obtainedMarks = 0;
     let easyCorrect = 0, easyTotal = 0, mediumCorrect = 0, mediumTotal = 0, hardCorrect = 0, hardTotal = 0;
 
-    for (const ans of attempt.answers) {
-      totalMarks += ans.marks;
-      if (ans.isSkipped) skipped++;
-      else if (ans.isCorrect) { correct++; obtainedMarks += ans.marksAwarded; }
-      else incorrect++;
+    for (const ans of mcqAnswers) {
+      if (!ans.countsTowardLimit) {
+        ans.marksAwarded = 0;
+        continue;
+      }
+
+      if (ans.isCorrect) {
+        correct++;
+        ans.marksAwarded = Number(snapshot.marksPerMcq) || ans.marks || 1;
+        obtainedMarks += ans.marksAwarded;
+      } else {
+        incorrect++;
+        ans.marksAwarded = -(Number(snapshot.negativeMarking) || 0);
+        obtainedMarks += ans.marksAwarded;
+      }
 
       const diff = (ans.difficulty || 'Medium').toLowerCase();
       if (diff === 'easy') { easyTotal++; if (ans.isCorrect) easyCorrect++; }
@@ -596,13 +1252,25 @@ export async function finishTest(req, res) {
     attempt.score = { totalMarks, obtainedMarks, percentage, correct, incorrect, skipped, easyCorrect, easyTotal, mediumCorrect, mediumTotal, hardCorrect, hardTotal };
     attempt.status = 'completed';
     attempt.finishedAt = new Date();
+    attempt.resultReleaseAt = new Date(attempt.finishedAt.getTime() + RESULT_RELEASE_DELAY_MS);
+    if (attempt.subjectiveRequired && !attempt.subjectiveUploadDeadlineAt) {
+      attempt.subjectiveUploadDeadlineAt = new Date(
+        (attempt.deadlineAt?.getTime() || attempt.finishedAt.getTime()) + ANSWER_SHEET_UPLOAD_GRACE_MS,
+      );
+    }
     attempt.durationMs = attempt.finishedAt.getTime() - attempt.startedAt.getTime();
 
     if (subjectiveSubmissionId) {
-      const sub = await SubjectiveSubmission.findById(subjectiveSubmissionId);
+      const sub = await SubjectiveSubmission.findOne({
+        _id: subjectiveSubmissionId,
+        userId: req.user._id,
+        attemptId: attempt._id,
+      });
       if (sub) {
         attempt.subjectiveSubmissionId = sub._id;
-        attempt.subjectiveScore = { totalMarks: sub.totalMarks, obtainedMarks: sub.obtainedMarks, percentage: sub.percentage };
+        if (sub.status === 'completed') {
+          attempt.subjectiveScore = { totalMarks: sub.totalMarks, obtainedMarks: sub.obtainedMarks, percentage: sub.percentage };
+        }
       }
     }
 
@@ -621,10 +1289,11 @@ export async function finishTest(req, res) {
 
     const subtopicStats = {};
     for (const ans of attempt.answers) {
+      if (!ans.countsTowardLimit) continue;
       const st = ans.subtopic || 'General';
       if (!subtopicStats[st]) subtopicStats[st] = { correct: 0, total: 0 };
       subtopicStats[st].total++;
-      if (ans.isCorrect) subtopicStats[st].correct++;
+      if (ans.isCorrect && ans.countsTowardLimit) subtopicStats[st].correct++;
     }
     const weakAreas = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) < 0.5).map(([name, s]) => `${name} (${s.correct}/${s.total})`);
     const strengths = Object.entries(subtopicStats).filter(([, s]) => s.total > 0 && (s.correct / s.total) >= 0.7).map(([name, s]) => `${name} (${s.correct}/${s.total})`);
@@ -649,8 +1318,12 @@ export async function finishTest(req, res) {
     analysisQueue.enqueueAttempt(attempt._id).catch((err) => console.warn('Auto analysis enqueue warning:', err?.message));
 
     res.json({
-      success: true, attemptId: attempt._id, score: attempt.score, subjectiveScore: attempt.subjectiveScore, combinedScore: attempt.combinedScore, aiAnalysis: attempt.aiAnalysis,
-      aiAnalysisStatus: attempt.aiAnalysisStatus, aiAnalysisEta: attempt.aiAnalysisEta, durationMs: attempt.durationMs,
+      success: true,
+      attemptId: attempt._id,
+      resultAvailable: false,
+      resultReleaseAt: attempt.resultReleaseAt,
+      message: 'Your result will be available after the evaluation period.',
+      durationMs: attempt.durationMs,
     });
   } catch (err) {
     console.error('finishTest error:', err);
@@ -667,6 +1340,25 @@ export async function getResult(req, res) {
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id, status: 'completed' }).lean();
     if (!attempt) return res.status(404).json({ error: 'Completed test result not found' });
 
+    const submission = attempt.subjectiveSubmissionId
+      ? await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean()
+      : null;
+    const releaseState = getResultReleaseState(attempt, submission);
+    if (!releaseState.available) {
+      return res.json({
+        success: true,
+        resultAvailable: false,
+        resultReleaseAt: releaseState.resultReleaseAt,
+        subjectiveStatus: releaseState.subjectiveStatus,
+        message: ({
+          awaiting_upload: 'Upload your answer sheet before the upload window closes to complete evaluation.',
+          review_required: 'Your answer sheet needs review before marks can be released.',
+          failed: 'Answer-sheet evaluation failed. Retry evaluation before the result can be released.',
+          evaluation_missing: 'The answer-sheet evaluation record could not be found. Support review is required.',
+        })[releaseState.subjectiveStatus] || 'Your result is being evaluated and is not available yet.',
+      });
+    }
+
     const questions = await Question.find({ _id: { $in: attempt.questionIds } }).select('+correctOption +explanation').lean();
     const qMap = {};
     for (const q of questions) qMap[q._id.toString()] = q;
@@ -682,18 +1374,18 @@ export async function getResult(req, res) {
       };
     });
 
-    let subjectiveDetails = null;
-    if (attempt.subjectiveSubmissionId) subjectiveDetails = await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean();
+    const subjectiveDetails = submission;
 
     res.json({
       success: true,
+      resultAvailable: true,
       result: {
         attemptId: attempt._id, testType: attempt.testType, subjectCode: attempt.subjectCode, subjectName: attempt.subjectName,
         chapterNumber: attempt.chapterNumber, chapterTitle: attempt.chapterTitle, medium: attempt.medium, totalQuestions: attempt.totalQuestions, 
         score: attempt.score, subjectiveScore: attempt.subjectiveScore, combinedScore: attempt.combinedScore,     
         aiAnalysis: attempt.aiAnalysis, aiAnalysisStatus: attempt.aiAnalysisStatus || 'completed',
         aiAnalysisEta: attempt.aiAnalysisEta || '', durationMs: attempt.durationMs,
-        startedAt: attempt.startedAt, finishedAt: attempt.finishedAt, isHardMode: attempt.isHardMode,
+        startedAt: attempt.startedAt, finishedAt: attempt.finishedAt, resultReleaseAt: releaseState.resultReleaseAt, isHardMode: attempt.isHardMode,
         answers: detailedAnswers, subjectiveDetails
       },
     });
@@ -711,17 +1403,37 @@ export async function getRecentResults(req, res) {
     const limit = Math.min(20, Number(req.query.limit) || 10);
     const attempts = await TestAttempt.find({ userId: req.user._id, status: 'completed' })
       .sort({ finishedAt: -1 }).limit(limit)
-      .select('testType subjectCode subjectName chapterNumber chapterTitle medium score subjectiveScore combinedScore aiAnalysis durationMs startedAt finishedAt isHardMode totalQuestions').lean();
+      .select('testType subjectCode subjectName chapterNumber chapterTitle medium score subjectiveScore combinedScore aiAnalysis durationMs startedAt finishedAt resultReleaseAt deadlineAt subjectiveRequired subjectiveSubmissionId isHardMode totalQuestions').lean();
+    const submissionIds = attempts
+      .map((attempt) => attempt.subjectiveSubmissionId)
+      .filter(Boolean);
+    const submissions = await SubjectiveSubmission.find({ _id: { $in: submissionIds } })
+      .select('_id status')
+      .lean();
+    const submissionsById = new Map(submissions.map((submission) => [submission._id.toString(), submission]));
 
     res.json({
       success: true, count: attempts.length,
-      results: attempts.map((a) => ({
-        attemptId: a._id, testType: a.testType, subjectCode: a.subjectCode, subjectName: a.subjectName,
-        chapterNumber: a.chapterNumber, chapterTitle: a.chapterTitle, medium: a.medium, totalQuestions: a.totalQuestions, 
-        score: a.score, subjectiveScore: a.subjectiveScore, combinedScore: a.combinedScore,
-        performanceLevel: a.aiAnalysis?.performanceLevel || '', durationMs: a.durationMs, 
-        startedAt: a.startedAt, finishedAt: a.finishedAt, isHardMode: a.isHardMode,
-      })),
+      results: attempts.map((a) => {
+        const submission = a.subjectiveSubmissionId
+          ? submissionsById.get(a.subjectiveSubmissionId.toString())
+          : null;
+        const releaseState = getResultReleaseState(a, submission);
+        const result = {
+          attemptId: a._id, testType: a.testType, subjectCode: a.subjectCode, subjectName: a.subjectName,
+          chapterNumber: a.chapterNumber, chapterTitle: a.chapterTitle, medium: a.medium, totalQuestions: a.totalQuestions,
+          resultAvailable: releaseState.available, resultReleaseAt: releaseState.resultReleaseAt,
+          subjectiveStatus: releaseState.subjectiveStatus,
+          durationMs: a.durationMs, startedAt: a.startedAt, finishedAt: a.finishedAt, isHardMode: a.isHardMode,
+        };
+        if (releaseState.available) {
+          result.score = a.score;
+          result.subjectiveScore = a.subjectiveScore;
+          result.combinedScore = a.combinedScore;
+          result.performanceLevel = a.aiAnalysis?.performanceLevel || '';
+        }
+        return result;
+      }),
     });
   } catch (err) {
     console.error('getRecentResults error:', err);
@@ -737,6 +1449,12 @@ export async function getPdfDownloadToken(req, res) {
     const { attemptId } = req.params;
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id, status: 'completed' }).lean();
     if (!attempt) return res.status(404).json({ error: 'Completed test attempt not found' });
+    const submission = attempt.subjectiveSubmissionId
+      ? await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean()
+      : null;
+    if (!getResultReleaseState(attempt, submission).available) {
+      return res.status(409).json({ error: 'Test result is not available yet' });
+    }
 
     const token = generatePdfToken(attempt._id, req.user._id, 7200);
     const expiresAt = new Date(Date.now() + 7200 * 1000).toISOString();
@@ -771,6 +1489,12 @@ export async function downloadTestReportPdf(req, res) {
 
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId, status: 'completed' }).lean();
     if (!attempt) return res.status(404).json({ error: 'Completed test attempt not found' });
+    const submission = attempt.subjectiveSubmissionId
+      ? await SubjectiveSubmission.findById(attempt.subjectiveSubmissionId).lean()
+      : null;
+    if (!getResultReleaseState(attempt, submission).available) {
+      return res.status(409).json({ error: 'Test result is not available yet' });
+    }
 
     const user = await User.findById(userId).lean();
     const questions = await Question.find({ _id: { $in: attempt.questionIds } }).select('+correctOption +explanation').lean();
@@ -923,13 +1647,94 @@ export async function startPaperTest(req, res) {
     const mcqQuestions = paper.questions.filter(q => q.questionType !== 'subjective');
     const subjectiveQuestions = paper.questions.filter(q => q.questionType === 'subjective');
 
-    const attempt = await TestAttempt.create({
+    let attempt = await TestAttempt.findOne({
+      userId: req.user._id,
+      paperId: paper.paperId,
+      isHardMode: !!isHardMode,
+      status: 'in_progress',
+    });
+
+    if (attempt) {
+      const questionDocs = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
+      const questionOrder = new Map(attempt.questionIds.map((id, index) => [id.toString(), index]));
+      questionDocs.sort((a, b) => questionOrder.get(a._id.toString()) - questionOrder.get(b._id.toString()));
+      const safeQuestions = questionDocs.map((q, idx) => ({
+        index: idx, id: q._id, questionNumber: mcqQuestions[idx]?.questionNumber,
+        questionText: q.questionText, hindiQuestionText: q.hindiQuestionText, options: q.options,
+        difficulty: q.difficulty, subtopic: q.subtopic, marks: q.marks, chapterNumber: q.chapterNumber,
+        chapterTitle: q.chapterTitle, isMVVI: q.isMVVI, isVVI: q.isVVI, mvviTag: mcqQuestions[idx]?.mvviTag,
+      }));
+
+      return res.json({
+        success: true, attemptId: attempt._id, testType: 'full_paper', subjectName: paper.subjectName,
+        chapterTitle: attempt.chapterTitle, totalQuestions: safeQuestions.length, medium: paper.medium,
+        paperCode: paper.paperCode, year: paper.year, examPhase: paper.examPhase, setCode: paper.setCode,
+        sourceCreditText: paper.sourceCreditText, questions: safeQuestions,
+        subjectiveQuestions: subjectiveQuestions.map(sq => ({
+          questionNumber: sq.questionNumber, questionText: sq.questionText, hindiQuestionText: sq.hindiQuestionText, marks: sq.marks
+        })),
+        answers: (attempt.answers || [])
+          .filter((answer) => answer.questionId && answer.selectedOption)
+          .map((answer) => ({
+            questionId: answer.questionId.toString(),
+            selectedOption: answer.selectedOption,
+            isSkipped: answer.isSkipped,
+            firstAnsweredAt: answer.firstAnsweredAt,
+            countsTowardLimit: answer.countsTowardLimit,
+          })),
+        deadlineAt: attempt.deadlineAt,
+        subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+        subjectiveRequired: attempt.subjectiveRequired,
+        subjectiveSubmissionId: attempt.subjectiveSubmissionId,
+        timeLimitMs: attempt.timeLimitMs,
+        startedAt: attempt.startedAt,
+        currentQuestionIndex: attempt.currentQuestionIndex,
+        currentSection: attempt.currentSection,
+        boardPatternSnapshot: attempt.boardPatternSnapshot,
+      });
+    }
+
+    const config = await getResolvedBoardConfig(paper.boardCode);
+    const pattern = config.paperPattern || {};
+    const durationMinutes = pattern.durationMinutes || 0;
+    const startedAt = new Date();
+    const deadlineAt = durationMinutes > 0 ? new Date(startedAt.getTime() + durationMinutes * 60 * 1000) : null;
+    const timeLimitMs = durationMinutes > 0 ? durationMinutes * 60 * 1000 : 0;
+    const boardPatternSnapshot = {
+      mcqCount: pattern.mcqCount,
+      attemptLimit: pattern.attemptLimit,
+      marksPerMcq: pattern.marksPerMcq,
+      durationMinutes: pattern.durationMinutes,
+      negativeMarking: pattern.negativeMarking,
+      optionsCount: pattern.optionsCount,
+      hasShortAnswer: pattern.hasShortAnswer,
+      shortCount: pattern.shortCount,
+      shortMarks: pattern.shortMarks,
+      shortAttemptLimit: pattern.shortAttemptLimit,
+      hasLongAnswer: pattern.hasLongAnswer,
+      longCount: pattern.longCount,
+      longMarks: pattern.longMarks,
+      longAttemptLimit: pattern.longAttemptLimit,
+      totalMarks: pattern.totalMarks,
+    };
+
+    attempt = await TestAttempt.create({
       userId: req.user._id, testType: 'full_paper', boardCode: paper.boardCode, classLevel: paper.classLevel,
       subjectCode: paper.subjectCode, subjectName: paper.subjectName, chapterNumber: null,
       chapterTitle: `${paper.paperCode} - ${paper.year} ${paper.examPhase}${paper.setCode ? ` Set ${paper.setCode}` : ''}`,
       medium: paper.medium, questionIds: [], totalQuestions: mcqQuestions.length, status: 'in_progress',
-      startedAt: new Date(), isHardMode: !!isHardMode, paperId: paper.paperId, paperYear: paper.year,
+      startedAt, deadlineAt, timeLimitMs, boardPatternSnapshot,
+      subjectiveUploadDeadlineAt: subjectiveQuestions.length
+        ? new Date((deadlineAt?.getTime() || startedAt.getTime()) + ANSWER_SHEET_UPLOAD_GRACE_MS)
+        : null,
+      isHardMode: !!isHardMode, paperId: paper.paperId, paperYear: paper.year,
       paperExamPhase: paper.examPhase, paperSetCode: paper.setCode,
+      subjectiveRequired: subjectiveQuestions.length > 0,
+      subjectiveScore: {
+        totalMarks: subjectiveQuestions.reduce((total, question) => total + (Number(question.marks) || 0), 0),
+        obtainedMarks: 0,
+        percentage: 0,
+      },
     });
 
     const questionDocs = await Question.insertMany(
@@ -961,8 +1766,21 @@ export async function startPaperTest(req, res) {
       paperCode: paper.paperCode, year: paper.year, examPhase: paper.examPhase, setCode: paper.setCode,
       sourceCreditText: paper.sourceCreditText, questions: safeQuestions,
       subjectiveQuestions: subjectiveQuestions.map(sq => ({
-        questionNumber: sq.questionNumber, questionText: sq.questionText, hindiQuestionText: sq.hindiQuestionText, marks: sq.marks
-      }))
+        questionNumber: sq.questionNumber,
+        type: 'subjective',
+        questionText: sq.questionText,
+        hindiQuestionText: sq.hindiQuestionText,
+        marks: sq.marks,
+      })),
+      deadlineAt,
+      subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+      timeLimitMs,
+      startedAt,
+      currentQuestionIndex: 0,
+      currentSection: 'mcq',
+      boardPatternSnapshot,
+      subjectiveRequired: attempt.subjectiveRequired,
+      subjectiveSubmissionId: attempt.subjectiveSubmissionId,
     });
   } catch (err) {
     console.error('startPaperTest error:', err);

@@ -29,14 +29,22 @@ const questionSchema = new mongoose.Schema(
     },
     options: {
       type: [optionSchema],
-      validate: [val => val.length >= 2, 'At least 2 options required'],
+      default: [],
+      validate: {
+        validator(value) {
+          return this.type === 'mcq' ? value.length >= 2 : value.length === 0;
+        },
+        message: 'MCQs require options; subjective questions must not include options',
+      },
     },
     correctOption: {
       type: String,
-      required: true,
+      required() { return this.type === 'mcq'; },
       trim: true,
       select: false, // Hidden by default from student mid-test
     },
+    modelAnswer: { type: String, default: '', select: false },
+    hindiModelAnswer: { type: String, default: '', select: false },
     explanation: {
       type: String,
       default: '',
@@ -70,6 +78,11 @@ const questionSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: null,
+    },
+    isHardMode: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
     subjectCode: {
       type: String,
