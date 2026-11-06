@@ -76,6 +76,8 @@ const testAttemptSchema = new mongoose.Schema(
     timeLimitMs: { type: Number, default: 0 }, // 0 = unlimited (practice mode)
     // Server-authoritative deadline for exam mode
     deadlineAt: { type: Date, default: null },
+    generationWaitStartedAt: { type: Date, default: null },
+    generationWaitDurationMs: { type: Number, default: 0 },
 
     // Resume state
     currentQuestionIndex: { type: Number, default: 0 },

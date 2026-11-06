@@ -40,6 +40,25 @@ import {
 
 const MCQ_PRACTICE_QUESTION_COUNT = 10;
 
+function closeGenerationWait(attempt, now = new Date()) {
+  if (!attempt.generationWaitStartedAt) return 0;
+  const elapsedMs = Math.max(0, now.getTime() - new Date(attempt.generationWaitStartedAt).getTime());
+  if (attempt.deadlineAt) {
+    attempt.deadlineAt = new Date(new Date(attempt.deadlineAt).getTime() + elapsedMs);
+  }
+  attempt.generationWaitDurationMs = (Number(attempt.generationWaitDurationMs) || 0) + elapsedMs;
+  attempt.generationWaitStartedAt = null;
+  return elapsedMs;
+}
+
+function effectiveDeadlineAt(attempt, now = new Date()) {
+  if (!attempt.deadlineAt) return null;
+  const activeWaitMs = attempt.generationWaitStartedAt
+    ? Math.max(0, now.getTime() - new Date(attempt.generationWaitStartedAt).getTime())
+    : 0;
+  return new Date(new Date(attempt.deadlineAt).getTime() + activeWaitMs);
+}
+
 /**
  * Test Controller — Final Optimized & Secured (Fast Start)
  */
@@ -432,11 +451,23 @@ export async function getGenerationJobStatus(req, res) {
     const job = await GenerationJob.findById(jobId).lean();
     if (!job) return res.status(404).json({ error: 'Generation job not found' });
 
+    const availableCount = await Question.countDocuments({
+      boardCode: job.boardCode.toLowerCase(),
+      classLevel: String(job.classLevel),
+      stream: job.stream || null,
+      subjectCode: job.subjectCode.toLowerCase(),
+      chapterNumber: Number(job.chapterNumber),
+      medium: job.medium,
+      isHardMode: job.isHardMode ? true : { $ne: true },
+      type: 'mcq',
+      isActive: true,
+      status: 'verified',
+    });
     res.set('Cache-Control', 'no-store');
     res.json({
       success: true, job: {
         id: job._id, status: job.status, progressPercent: job.progressPercent,
-        progressMessage: job.progressMessage, verifiedCount: job.verifiedCount,
+        progressMessage: job.progressMessage, verifiedCount: availableCount, availableCount,
         targetCount: job.targetCount, error: job.error, completedAt: job.completedAt,
         targetShortCount: job.targetShortCount, verifiedShortCount: job.verifiedShortCount,
         targetLongCount: job.targetLongCount, verifiedLongCount: job.verifiedLongCount,
@@ -490,6 +521,8 @@ export async function getAttemptState(req, res) {
       medium: attempt.medium,
       generationJobId: attempt.generationJobId,
       deadlineAt: attempt.deadlineAt,
+      generationWaitStartedAt: attempt.generationWaitStartedAt,
+      generationWaitDurationMs: attempt.generationWaitDurationMs,
       subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
       subjectiveRequired: attempt.subjectiveRequired,
       timeLimitMs: attempt.timeLimitMs,
@@ -532,7 +565,7 @@ export async function getAttemptState(req, res) {
 
 export async function syncAttemptQuestions(req, res) {
   try {
-    const attempt = await TestAttempt.findOne({
+    let attempt = await TestAttempt.findOne({
       _id: req.params.attemptId,
       userId: req.user._id,
       status: 'in_progress',
@@ -603,17 +636,23 @@ export async function syncAttemptQuestions(req, res) {
         { new: true }
       );
       if (!updatedAttempt) return res.status(404).json({ error: 'Active test attempt not found' });
+      attempt = updatedAttempt;
 
-      const allAttemptQuestions = await Question.find({ _id: { $in: updatedAttempt.questionIds } })
+      const allAttemptQuestions = await Question.find({ _id: { $in: attempt.questionIds } })
         .select('_id type')
         .lean();
       const totalQuestions = allAttemptQuestions.filter((question) => question.type === 'mcq').length;
       const subjectiveRequired = allAttemptQuestions.some((question) => question.type === 'short' || question.type === 'long');
-      if (updatedAttempt.totalQuestions !== totalQuestions) {
-        updatedAttempt.totalQuestions = totalQuestions;
+      if (attempt.totalQuestions !== totalQuestions) {
+        attempt.totalQuestions = totalQuestions;
       }
-      if (subjectiveRequired && !updatedAttempt.subjectiveRequired) updatedAttempt.subjectiveRequired = true;
-      await updatedAttempt.save();
+      if (subjectiveRequired && !attempt.subjectiveRequired) attempt.subjectiveRequired = true;
+      await attempt.save();
+    }
+
+    if (attempt.generationWaitStartedAt && (newQuestions.length || job.status === 'completed')) {
+      closeGenerationWait(attempt);
+      await attempt.save();
     }
 
     if (job.status === 'completed' && attempt.subjectiveRequired && !attempt.subjectiveUploadDeadlineAt) {
@@ -660,6 +699,8 @@ export async function syncAttemptQuestions(req, res) {
         targetLongCount: job.targetLongCount,
         error: job.error,
       },
+      deadlineAt: attempt.deadlineAt,
+      generationWaitStartedAt: attempt.generationWaitStartedAt,
       subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
     });
   } catch (err) {
@@ -750,7 +791,7 @@ export async function retryAttemptGeneration(req, res) {
 export async function updateAttemptState(req, res) {
   try {
     const { attemptId } = req.params;
-    const { currentQuestionIndex, currentSection } = req.body;
+    const { currentQuestionIndex, currentSection, generationWaiting } = req.body;
     const attempt = await TestAttempt.findOne({
       _id: attemptId,
       userId: req.user._id,
@@ -758,7 +799,7 @@ export async function updateAttemptState(req, res) {
     });
     if (!attempt) return res.status(404).json({ error: 'Active test attempt not found' });
 
-    if (currentQuestionIndex === undefined && currentSection === undefined) {
+    if (currentQuestionIndex === undefined && currentSection === undefined && generationWaiting === undefined) {
       return res.status(400).json({ error: 'At least one attempt state field is required' });
     }
 
@@ -777,11 +818,40 @@ export async function updateAttemptState(req, res) {
       attempt.currentSection = currentSection;
     }
 
+    if (generationWaiting !== undefined) {
+      if (typeof generationWaiting !== 'boolean') {
+        return res.status(400).json({ error: 'generationWaiting must be a boolean' });
+      }
+      if (generationWaiting) {
+        if (!attempt.generationJobId || attempt.testType === 'full_paper') {
+          return res.status(409).json({ error: 'This exam has no background question generation to wait for' });
+        }
+        const effectiveDeadline = effectiveDeadlineAt(attempt);
+        if (effectiveDeadline && new Date() >= effectiveDeadline) {
+          return res.status(409).json({ error: 'Exam time has expired' });
+        }
+        if (attempt.currentQuestionIndex !== attempt.totalQuestions - 1) {
+          return res.status(409).json({ error: 'Timer can only pause at the last available question' });
+        }
+        if (!attempt.generationWaitStartedAt) attempt.generationWaitStartedAt = new Date();
+      } else {
+        closeGenerationWait(attempt);
+      }
+    } else if (
+      attempt.generationWaitStartedAt
+      && (attempt.currentQuestionIndex < attempt.totalQuestions - 1 || attempt.currentSection === 'subjective')
+    ) {
+      closeGenerationWait(attempt);
+    }
+
     await attempt.save();
     res.json({
       success: true,
       currentQuestionIndex: attempt.currentQuestionIndex,
       currentSection: attempt.currentSection,
+      deadlineAt: attempt.deadlineAt,
+      generationWaitStartedAt: attempt.generationWaitStartedAt,
+      generationWaitDurationMs: attempt.generationWaitDurationMs,
     });
   } catch (err) {
     console.error('updateAttemptState error:', err);
@@ -986,6 +1056,8 @@ export async function startTest(req, res) {
         medium: attempt.medium,
         generationJobId: attempt.generationJobId,
         deadlineAt: attempt.deadlineAt,
+        generationWaitStartedAt: attempt.generationWaitStartedAt,
+        generationWaitDurationMs: attempt.generationWaitDurationMs,
         subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
         subjectiveRequired: attempt.subjectiveRequired,
         subjectiveSubmissionId: attempt.subjectiveSubmissionId,
@@ -1176,7 +1248,8 @@ export async function submitAnswer(req, res) {
     if (!attempt.questionIds.some((qid) => qid.toString() === questionId)) return res.status(400).json({ error: 'Invalid question' });
 
     // Check server-authoritative deadline
-    if (attempt.deadlineAt && new Date() > attempt.deadlineAt) {
+    const effectiveDeadline = effectiveDeadlineAt(attempt);
+    if (effectiveDeadline && new Date() > effectiveDeadline) {
       return res.status(400).json({ error: 'Exam time has expired' });
     }
 
@@ -1371,7 +1444,10 @@ export async function finishTest(req, res) {
         (attempt.deadlineAt?.getTime() || attempt.finishedAt.getTime()) + ANSWER_SHEET_UPLOAD_GRACE_MS,
       );
     }
-    attempt.durationMs = attempt.finishedAt.getTime() - attempt.startedAt.getTime();
+    attempt.durationMs = Math.max(
+      0,
+      attempt.finishedAt.getTime() - attempt.startedAt.getTime() - (Number(attempt.generationWaitDurationMs) || 0),
+    );
 
     if (subjectiveSubmissionId) {
       const sub = await SubjectiveSubmission.findOne({
@@ -1804,6 +1880,8 @@ export async function startPaperTest(req, res) {
             countsTowardLimit: answer.countsTowardLimit,
           })),
         deadlineAt: attempt.deadlineAt,
+        generationWaitStartedAt: attempt.generationWaitStartedAt,
+        generationWaitDurationMs: attempt.generationWaitDurationMs,
         subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
         subjectiveRequired: attempt.subjectiveRequired,
         subjectiveSubmissionId: attempt.subjectiveSubmissionId,

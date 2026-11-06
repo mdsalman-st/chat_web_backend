@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { afterEach } from 'node:test';
 import GenerationJob from '../models/GenerationJob.js';
+import Question from '../models/Question.js';
 import TestAttempt from '../models/TestAttempt.js';
 import {
   buildChapterJobKey,
@@ -37,6 +38,9 @@ test('MCQ practice jobs have a distinct key from board-exam generation', () => {
 test('generation and attempt schemas persist MCQ practice modes', () => {
   assert.ok(GenerationJob.schema.path('generationMode').enumValues.includes('mcq_practice'));
   assert.ok(TestAttempt.schema.path('testType').enumValues.includes('chapter_mcq_practice'));
+  assert.ok(TestAttempt.schema.path('generationWaitStartedAt'));
+  assert.ok(TestAttempt.schema.path('generationWaitDurationMs'));
+  assert.ok(Question.schema.path('options').schema.path('hindiText'));
 });
 
 test('generation retries indefinitely with exponential backoff capped at five minutes', () => {
@@ -48,12 +52,17 @@ test('generation retries indefinitely with exponential backoff capped at five mi
   assert.equal(getAutomaticGenerationRetryAt(3, now).getTime(), now + 240_000);
   assert.equal(getAutomaticGenerationRetryAt(4, now).getTime(), now + 300_000);
   assert.equal(getAutomaticGenerationRetryAt(100, now).getTime(), now + 300_000);
+  assert.equal(getAutomaticGenerationRetryAt(0, now, 90_000).getTime(), now + 90_000);
 });
 
 test('generation schedules one bounded batch at a time, prioritizing exam MCQs', () => {
   assert.deepEqual(
     getNextGenerationBatch({ mcq: 0, short: 0, long: 0 }, { mcq: 100, short: 30, long: 8 }),
     { stage: 'mcq', batchSize: 3 },
+  );
+  assert.deepEqual(
+    getNextGenerationBatch({ mcq: 3, short: 0, long: 0 }, { mcq: 100, short: 30, long: 8 }),
+    { stage: 'mcq', batchSize: 8 },
   );
   assert.deepEqual(
     getNextGenerationBatch({ mcq: 99, short: 0, long: 0 }, { mcq: 100, short: 30, long: 8 }),
