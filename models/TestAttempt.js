@@ -39,7 +39,7 @@ const testAttemptSchema = new mongoose.Schema(
     // Test configuration
     testType: {
       type: String,
-      enum: ['chapter_practice', 'full_paper', 'mock_exam'],
+      enum: ['chapter_practice', 'chapter_mcq_practice', 'full_paper', 'mock_exam'],
       default: 'chapter_practice',
     },
     boardCode: { type: String, required: true, lowercase: true },

@@ -19,6 +19,12 @@ const generationJobSchema = new mongoose.Schema(
     chapterNumber: { type: Number, required: true },
     medium: { type: String, default: 'Hindi' },
     isHardMode: { type: Boolean, default: false },
+    generationMode: {
+      type: String,
+      enum: ['board_exam', 'mcq_practice'],
+      default: 'board_exam',
+      index: true,
+    },
     status: {
       type: String,
       enum: ['queued', 'running', 'completed', 'failed'],
@@ -43,6 +49,8 @@ const generationJobSchema = new mongoose.Schema(
     targetLongCount: { type: Number, default: 0 },
     longMarks: { type: Number, default: 5 },
     workerLeaseUntil: { type: Date, default: null, index: true },
+    automaticRetryCount: { type: Number, default: 0 },
+    nextRetryAt: { type: Date, default: null, index: true },
     error: { type: String, default: null },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },

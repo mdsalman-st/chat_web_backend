@@ -7,6 +7,7 @@ import {
   getStudentProfile,
   updateStudentProfile,
   prepareChapterQuestions,
+  prepareChapterMcqPractice,
   getGenerationJobStatus,
   getAttemptState,
   syncAttemptQuestions,
@@ -52,6 +53,7 @@ router.put('/profile', protect, updateStudentProfile);
 
 /* Phase 2: Chapter Question Generation, Lazy Loading & Flagging */
 router.post('/chapters/prepare', protect, prepareChapterQuestions);
+router.post('/chapters/prepare-mcq-practice', protect, prepareChapterMcqPractice);
 router.get('/jobs/:jobId', getGenerationJobStatus);
 router.get('/chapters/:chapterNumber/questions', protect, getChapterPracticeQuestions);
 router.post('/questions/:questionId/flag', protect, flagQuestion);

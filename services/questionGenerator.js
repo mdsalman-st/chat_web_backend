@@ -1,6 +1,7 @@
 import Chapter from '../models/Chapter.js';
 import Question from '../models/Question.js';
 import GenerationJob from '../models/GenerationJob.js';
+import TestAttempt from '../models/TestAttempt.js';
 import { executeAiJsonWithFailover } from '../utils/aiClient.js';
 import { getChapterForMedium, getResolvedBoardConfig } from '../utils/boardEngine.js';
 import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
@@ -10,10 +11,21 @@ const HEARTBEAT_MS = 30 * 1000;
 const BATCH_SIZE = 3;
 const SUBJECTIVE_BATCH_SIZE = 2;
 const MAX_EMPTY_BATCHES = 3;
+const AUTOMATIC_RETRY_BASE_DELAY_MS = 30 * 1000;
+const AUTOMATIC_RETRY_MAX_DELAY_MS = 5 * 60 * 1000;
 
 let workerScheduled = false;
 let workerRunning = false;
 let recoveryTimer = null;
+
+export function getAutomaticGenerationRetryAt(retryCount, now = Date.now()) {
+  const retryExponent = Math.min(Math.max(0, Number(retryCount) || 0), 4);
+  const delayMs = Math.min(
+    AUTOMATIC_RETRY_MAX_DELAY_MS,
+    AUTOMATIC_RETRY_BASE_DELAY_MS * (2 ** retryExponent),
+  );
+  return new Date(now + delayMs);
+}
 
 function jobScope(job) {
   return {
@@ -45,6 +57,26 @@ async function countQuestions(scope, type) {
   });
 }
 
+export function buildChapterJobKey({
+  boardCode,
+  classLevel,
+  stream = null,
+  subjectCode,
+  chapterNumber,
+  medium,
+  isHardMode = false,
+  generationMode = 'board_exam',
+}) {
+  const normMedium = normalizeMedium(medium);
+  if (!normMedium) throw new Error(`Unsupported medium: ${medium}`);
+  if (!['board_exam', 'mcq_practice'].includes(generationMode)) {
+    throw new Error(`Unsupported question generation mode: ${generationMode}`);
+  }
+  const streamKey = stream ? `_${String(stream).trim().toLowerCase()}` : '';
+  const modeKey = generationMode === 'mcq_practice' ? '_mcq_practice' : '';
+  return `${boardCode.toLowerCase()}_${classLevel}_${subjectCode.toLowerCase()}_${chapterNumber}_${normMedium.toLowerCase()}${streamKey}_${isHardMode ? 'hard' : 'normal'}${modeKey}`;
+}
+
 export async function queueOrGetChapterJob({
   boardCode,
   classLevel,
@@ -53,6 +85,7 @@ export async function queueOrGetChapterJob({
   chapterNumber,
   medium = 'Hindi',
   isHardMode = false,
+  generationMode = 'board_exam',
   targetCount = 10,
   marksPerMcq = 1,
   targetShortCount = 0,
@@ -64,8 +97,10 @@ export async function queueOrGetChapterJob({
   if (!normMedium) throw new Error(`Unsupported medium: ${medium}`);
 
   const normalizedStream = stream ? String(stream).trim().toLowerCase() : null;
-  const streamKey = normalizedStream ? `_${normalizedStream}` : '';
-  const jobKey = `${boardCode.toLowerCase()}_${classLevel}_${subjectCode.toLowerCase()}_${chapterNumber}_${normMedium.toLowerCase()}${streamKey}_${isHardMode ? 'hard' : 'normal'}`;
+  const jobKey = buildChapterJobKey({
+    boardCode, classLevel, stream: normalizedStream, subjectCode, chapterNumber,
+    medium: normMedium, isHardMode, generationMode,
+  });
   let job = await GenerationJob.findOne({ jobKey });
   const targets = {
     mcq: Math.max(0, Number(targetCount) || 0),
@@ -108,6 +143,7 @@ export async function queueOrGetChapterJob({
         chapterNumber: Number(chapterNumber),
         medium: normMedium,
         isHardMode: !!isHardMode,
+        generationMode,
         status: 'queued',
         generationStage: 'mcq',
         progressPercent: 0,
@@ -119,6 +155,8 @@ export async function queueOrGetChapterJob({
         shortMarks: Number(shortMarks) || 2,
         longMarks: Number(longMarks) || 5,
         workerLeaseUntil: null,
+        automaticRetryCount: 0,
+        nextRetryAt: null,
         startedAt: null,
         completedAt: null,
         error: null,
@@ -139,6 +177,28 @@ function scheduleWorker() {
   });
 }
 
+export async function recoverFailedActiveAttemptJobs() {
+  const activeJobIds = await TestAttempt.distinct('generationJobId', {
+    status: 'in_progress',
+    generationJobId: { $ne: null },
+  });
+  if (!activeJobIds.length) return 0;
+
+  const result = await GenerationJob.updateMany(
+    { _id: { $in: activeJobIds }, status: 'failed' },
+    {
+      $set: {
+        status: 'queued',
+        nextRetryAt: null,
+        workerLeaseUntil: null,
+        error: null,
+        progressMessage: 'Automatically resuming question generation for your active exam. Existing questions are preserved.',
+      },
+    },
+  );
+  return result.modifiedCount || 0;
+}
+
 async function runWorker() {
   if (workerRunning) return;
   workerRunning = true;
@@ -147,7 +207,14 @@ async function runWorker() {
       const now = new Date();
       const job = await GenerationJob.findOneAndUpdate({
         $or: [
-          { status: 'queued' },
+          {
+            status: 'queued',
+            $or: [
+              { nextRetryAt: null },
+              { nextRetryAt: { $exists: false } },
+              { nextRetryAt: { $lte: now } },
+            ],
+          },
           { status: 'running', $or: [{ workerLeaseUntil: null }, { workerLeaseUntil: { $lte: now } }] },
         ],
       }, {
@@ -172,15 +239,22 @@ async function runWorker() {
       try {
         await runGenerationAndVerification(job);
       } catch (error) {
-        console.error(`[QuestionGeneration] Job ${job._id} failed:`, error);
+        const retryCount = Number(job.automaticRetryCount) || 0;
+        const nextRetryAt = getAutomaticGenerationRetryAt(retryCount);
+        const nextRetryCount = retryCount + 1;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[QuestionGeneration] Job ${job._id} generation attempt ${nextRetryCount} failed; preserving its questions and retrying at ${nextRetryAt.toISOString()}:`, error);
         await GenerationJob.updateOne({ _id: job._id }, {
           $set: {
-            status: 'failed',
-            error: error.message,
-            progressMessage: 'Question generation failed. Retry it from this exam to continue.',
+            status: 'queued',
+            automaticRetryCount: nextRetryCount,
+            nextRetryAt,
+            error: errorMessage,
+            progressMessage: `Question generation is temporarily unavailable. Automatically retrying in ${Math.ceil((nextRetryAt.getTime() - Date.now()) / 1000)} seconds. Existing questions are preserved.`,
             workerLeaseUntil: null,
           },
         });
+        continue;
       } finally {
         clearInterval(heartbeat);
       }
@@ -192,8 +266,19 @@ async function runWorker() {
 
 export function startQuestionGenerationWorker() {
   if (recoveryTimer) return;
-  scheduleWorker();
-  recoveryTimer = setInterval(scheduleWorker, 10 * 1000);
+  const recoverAndSchedule = async () => {
+    try {
+      const recoveredCount = await recoverFailedActiveAttemptJobs();
+      if (recoveredCount > 0) {
+        console.warn(`[QuestionGeneration] Automatically resumed ${recoveredCount} failed job(s) linked to active exams.`);
+      }
+    } catch (error) {
+      console.error('[QuestionGeneration] Failed to recover active exam jobs:', error);
+    }
+    scheduleWorker();
+  };
+  recoverAndSchedule();
+  recoveryTimer = setInterval(recoverAndSchedule, 10 * 1000);
   recoveryTimer.unref?.();
 }
 
@@ -287,8 +372,12 @@ async function updateJobProgress(job, stage, counts, targets) {
       progressPercent: progressPercent(counts, targets),
       progressMessage: `Generating ${stage} questions (${Math.min(stageCount, stageTarget)}/${stageTarget})…`,
       workerLeaseUntil: new Date(Date.now() + LEASE_MS),
+      automaticRetryCount: 0,
+      nextRetryAt: null,
     },
   });
+  job.automaticRetryCount = 0;
+  job.nextRetryAt = null;
 }
 
 async function generateStage(job, stage, scope, chapterTitle, boardName, counts, targets) {

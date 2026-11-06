@@ -16,7 +16,9 @@ export function getResultReleaseState(attempt, submission, now = new Date()) {
   const resultReleaseAt = attempt.resultReleaseAt
     ? new Date(attempt.resultReleaseAt)
     : finishedAt
-      ? new Date(finishedAt.getTime() + RESULT_RELEASE_DELAY_MS)
+      ? new Date(finishedAt.getTime() + (
+        attempt.testType === 'chapter_mcq_practice' ? 0 : RESULT_RELEASE_DELAY_MS
+      ))
       : null;
   const uploadWindowBase = attempt.deadlineAt ? new Date(attempt.deadlineAt) : finishedAt;
   const uploadGraceEndsAt = attempt.subjectiveUploadDeadlineAt

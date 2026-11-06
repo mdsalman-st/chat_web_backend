@@ -38,6 +38,8 @@ import {
   RESULT_RELEASE_DELAY_MS,
 } from '../utils/resultRelease.js';
 
+const MCQ_PRACTICE_QUESTION_COUNT = 10;
+
 /**
  * Test Controller — Final Optimized & Secured (Fast Start)
  */
@@ -352,6 +354,75 @@ export async function prepareChapterQuestions(req, res) {
   }
 }
 
+export async function prepareChapterMcqPractice(req, res) {
+  try {
+    const studentProf = req.user?.studentProfile || {};
+    const boardCode = String(req.body.boardCode || studentProf.board || 'bseb').toLowerCase();
+    const classLevel = String(req.body.classLevel || studentProf.classLevel || '10');
+    const stream = (req.body.stream || studentProf.stream)
+      ? String(req.body.stream || studentProf.stream).trim().toLowerCase()
+      : null;
+    const subjectCode = String(req.body.subjectCode || '').trim().toLowerCase();
+    const chapterNumber = Number(req.body.chapterNumber);
+    const medium = normalizeMedium(req.body.medium || studentProf.medium || 'Hindi');
+    const isHardMode = !!req.body.isHardMode;
+
+    if (!subjectCode || !Number.isInteger(chapterNumber) || chapterNumber < 1) {
+      return res.status(400).json({ error: 'subjectCode and a valid chapterNumber are required' });
+    }
+    if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
+
+    const existingCount = await Question.countDocuments({
+      boardCode, classLevel, stream, subjectCode, chapterNumber, medium,
+      isHardMode: isHardMode ? true : { $ne: true },
+      type: 'mcq', isActive: true, status: 'verified',
+    });
+    const minStartCount = Math.min(3, MCQ_PRACTICE_QUESTION_COUNT);
+    const job = await queueOrGetChapterJob({
+      boardCode,
+      classLevel,
+      stream,
+      subjectCode,
+      chapterNumber,
+      medium,
+      isHardMode,
+      generationMode: 'mcq_practice',
+      targetCount: MCQ_PRACTICE_QUESTION_COUNT,
+      marksPerMcq: 1,
+      targetShortCount: 0,
+      targetLongCount: 0,
+    });
+
+    const response = {
+      success: true,
+      ready: existingCount >= minStartCount,
+      isGenerating: job.status !== 'completed',
+      generationJobId: job._id,
+      jobId: job._id,
+      jobKey: job.jobKey,
+      status: job.status,
+      progressPercent: job.progressPercent,
+      progressMessage: `Preparing MCQ practice questions (${existingCount}/${minStartCount} ready to start).`,
+      availableCount: existingCount,
+      verifiedCount: job.verifiedCount,
+      minStartCount,
+      pattern: {
+        mcqCount: MCQ_PRACTICE_QUESTION_COUNT,
+        attemptLimit: MCQ_PRACTICE_QUESTION_COUNT,
+        marksPerMcq: 1,
+        shortCount: 0,
+        longCount: 0,
+        durationMinutes: 0,
+        totalMarks: MCQ_PRACTICE_QUESTION_COUNT,
+      },
+    };
+    return res.json(response);
+  } catch (err) {
+    console.error('prepareChapterMcqPractice error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to prepare MCQ practice questions' });
+  }
+}
+
 /* --------------------------------------------------------------------------
    GET /api/tests/jobs/:jobId
    -------------------------------------------------------------------------- */
@@ -368,6 +439,8 @@ export async function getGenerationJobStatus(req, res) {
         targetCount: job.targetCount, error: job.error, completedAt: job.completedAt,
         targetShortCount: job.targetShortCount, verifiedShortCount: job.verifiedShortCount,
         targetLongCount: job.targetLongCount, verifiedLongCount: job.verifiedLongCount,
+        automaticRetryCount: job.automaticRetryCount || 0,
+        nextRetryAt: job.nextRetryAt,
       },
     });
   } catch (err) {
@@ -417,6 +490,7 @@ export async function getAttemptState(req, res) {
       generationJobId: attempt.generationJobId,
       deadlineAt: attempt.deadlineAt,
       subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+      subjectiveRequired: attempt.subjectiveRequired,
       timeLimitMs: attempt.timeLimitMs,
       startedAt: attempt.startedAt,
       finishedAt: attempt.finishedAt,
@@ -476,6 +550,7 @@ export async function syncAttemptQuestions(req, res) {
       chapterNumber: attempt.chapterNumber,
       medium: attempt.medium,
       isHardMode: attempt.isHardMode,
+      generationMode: attempt.testType === 'chapter_mcq_practice' ? 'mcq_practice' : { $ne: 'mcq_practice' },
     }).lean();
     if (!job) return res.status(409).json({ error: 'Question generation job does not match this test attempt' });
 
@@ -613,6 +688,7 @@ export async function retryAttemptGeneration(req, res) {
       chapterNumber: attempt.chapterNumber,
       medium: attempt.medium,
       isHardMode: !!attempt.isHardMode,
+      generationMode: attempt.testType === 'chapter_mcq_practice' ? 'mcq_practice' : { $ne: 'mcq_practice' },
     };
     const job = await GenerationJob.findOne(jobScope).lean();
     if (!job) return res.status(409).json({ error: 'Question generation job does not match this test attempt' });
@@ -627,6 +703,8 @@ export async function retryAttemptGeneration(req, res) {
             progressPercent: 0,
             progressMessage: 'Retry queued. Existing questions and answers will be preserved.',
             workerLeaseUntil: null,
+            automaticRetryCount: 0,
+            nextRetryAt: null,
             error: null,
             startedAt: null,
             completedAt: null,
@@ -803,6 +881,7 @@ export async function startTest(req, res) {
   try {
     const studentProf = req.user?.studentProfile || {};
     const { subjectCode, chapterNumber, testType = 'chapter_practice', isHardMode = false, paperId, generationJobId } = req.body;
+    const isMcqPractice = testType === 'chapter_mcq_practice';
 
     const boardCode = req.body.boardCode || studentProf.board || 'bseb';
     const classLevel = req.body.classLevel || studentProf.classLevel || '10';
@@ -813,6 +892,9 @@ export async function startTest(req, res) {
 
     if (!subjectCode) return res.status(400).json({ error: 'subjectCode is required' });
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
+    if (isMcqPractice && (!chapterNumber || !generationJobId)) {
+      return res.status(400).json({ error: 'MCQ chapter practice requires a chapter and its preparation job' });
+    }
 
     let linkedGenerationJob = null;
     if (generationJobId) {
@@ -828,6 +910,7 @@ export async function startTest(req, res) {
         chapterNumber: Number(chapterNumber),
         medium,
         isHardMode: !!isHardMode,
+        generationMode: isMcqPractice ? 'mcq_practice' : { $ne: 'mcq_practice' },
       }).lean();
       if (!linkedGenerationJob) {
         return res.status(400).json({ error: 'Question generation job does not match this test' });
@@ -837,6 +920,25 @@ export async function startTest(req, res) {
     // Get board pattern for this attempt
     const config = await getResolvedBoardConfig(boardCode);
     const pattern = config.paperPattern || {};
+    const activePattern = isMcqPractice
+      ? {
+        ...pattern,
+        mcqCount: MCQ_PRACTICE_QUESTION_COUNT,
+        attemptLimit: MCQ_PRACTICE_QUESTION_COUNT,
+        marksPerMcq: 1,
+        durationMinutes: 0,
+        negativeMarking: 0,
+        hasShortAnswer: false,
+        shortCount: 0,
+        shortMarks: 0,
+        shortAttemptLimit: 0,
+        hasLongAnswer: false,
+        longCount: 0,
+        longMarks: 0,
+        longAttemptLimit: 0,
+        totalMarks: MCQ_PRACTICE_QUESTION_COUNT,
+      }
+      : pattern;
 
     // 🚨 1. RESUME LOGIC - Exact match on attempt identity 🚨
     const attemptQuery = {
@@ -930,17 +1032,20 @@ export async function startTest(req, res) {
       questions = await Question.find({ boardCode: 'ncert_default', ...query }).lean();
     }
     if (questions.length === 0) return res.status(404).json({ error: 'No questions available.' });
+    if (isMcqPractice) questions = questions.filter((question) => question.type === 'mcq');
 
     const linkedJob = linkedGenerationJob
       ? await GenerationJob.findById(linkedGenerationJob._id).lean()
       : null;
     const configuredTargets = {
-      mcq: Math.max(0, Number(linkedJob?.targetCount ?? pattern.mcqCount) || 0),
-      short: Math.max(0, Number(linkedJob?.targetShortCount ?? (pattern.hasShortAnswer ? pattern.shortCount : 0)) || 0),
-      long: Math.max(0, Number(linkedJob?.targetLongCount ?? (pattern.hasLongAnswer ? pattern.longCount : 0)) || 0),
+      mcq: Math.max(0, Number(linkedJob?.targetCount ?? activePattern.mcqCount) || 0),
+      short: Math.max(0, Number(linkedJob?.targetShortCount ?? (activePattern.hasShortAnswer ? activePattern.shortCount : 0)) || 0),
+      long: Math.max(0, Number(linkedJob?.targetLongCount ?? (activePattern.hasLongAnswer ? activePattern.longCount : 0)) || 0),
     };
     const questionTargets = {
-      mcq: configuredTargets.mcq || questions.filter((question) => question.type === 'mcq').length,
+      mcq: isMcqPractice
+        ? MCQ_PRACTICE_QUESTION_COUNT
+        : configuredTargets.mcq || questions.filter((question) => question.type === 'mcq').length,
       short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
       long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
     };
@@ -958,6 +1063,9 @@ export async function startTest(req, res) {
       .slice(0, questionTargets.short);
     const longQuestions = shuffle(questions.filter((question) => question.type === 'long'))
       .slice(0, questionTargets.long);
+    if (isMcqPractice && mcqQuestions.length < Math.min(3, MCQ_PRACTICE_QUESTION_COUNT)) {
+      return res.status(409).json({ error: 'At least three MCQs must be ready before starting chapter practice.' });
+    }
     const subjectiveQuestions = [...shortQuestions, ...longQuestions];
     questions = [...mcqQuestions, ...subjectiveQuestions];
 
@@ -973,28 +1081,28 @@ export async function startTest(req, res) {
     } catch (e) { /* ignore */ }
 
     // Calculate deadline for exam mode
-    const durationMinutes = pattern.durationMinutes || 0;
+    const durationMinutes = activePattern.durationMinutes || 0;
     const startedAt = new Date();
     const deadlineAt = durationMinutes > 0 ? new Date(startedAt.getTime() + durationMinutes * 60 * 1000) : null;
     const timeLimitMs = durationMinutes > 0 ? durationMinutes * 60 * 1000 : 0;
 
     // Board pattern snapshot
     const boardPatternSnapshot = {
-      mcqCount: pattern.mcqCount,
-      attemptLimit: pattern.attemptLimit,
-      marksPerMcq: pattern.marksPerMcq,
-      durationMinutes: pattern.durationMinutes,
-      negativeMarking: pattern.negativeMarking,
-      optionsCount: pattern.optionsCount,
-      hasShortAnswer: pattern.hasShortAnswer,
-      shortCount: pattern.shortCount,
-      shortMarks: pattern.shortMarks,
-      shortAttemptLimit: pattern.shortAttemptLimit,
-      hasLongAnswer: pattern.hasLongAnswer,
-      longCount: pattern.longCount,
-      longMarks: pattern.longMarks,
-      longAttemptLimit: pattern.longAttemptLimit,
-      totalMarks: pattern.totalMarks,
+      mcqCount: activePattern.mcqCount,
+      attemptLimit: activePattern.attemptLimit,
+      marksPerMcq: activePattern.marksPerMcq,
+      durationMinutes: activePattern.durationMinutes,
+      negativeMarking: activePattern.negativeMarking,
+      optionsCount: activePattern.optionsCount,
+      hasShortAnswer: activePattern.hasShortAnswer,
+      shortCount: activePattern.shortCount,
+      shortMarks: activePattern.shortMarks,
+      shortAttemptLimit: activePattern.shortAttemptLimit,
+      hasLongAnswer: activePattern.hasLongAnswer,
+      longCount: activePattern.longCount,
+      longMarks: activePattern.longMarks,
+      longAttemptLimit: activePattern.longAttemptLimit,
+      totalMarks: activePattern.totalMarks,
     };
 
     attempt = await TestAttempt.create({
@@ -1006,7 +1114,7 @@ export async function startTest(req, res) {
       deadlineAt, timeLimitMs, boardPatternSnapshot,
       paperId: paperId || null,
       generationJobId: linkedGenerationJob?._id || null,
-      subjectiveUploadDeadlineAt: linkedGenerationJob?.status === 'completed'
+      subjectiveUploadDeadlineAt: !isMcqPractice && linkedGenerationJob?.status === 'completed'
         ? new Date(Math.max(
           deadlineAt?.getTime() || 0,
           linkedGenerationJob.completedAt?.getTime() || Date.now(),
@@ -1015,8 +1123,8 @@ export async function startTest(req, res) {
       subjectiveRequired: questionTargets.short > 0 || questionTargets.long > 0,
       subjectiveScore: {
         totalMarks:
-          Math.min(questionTargets.short, Number(pattern.shortAttemptLimit) || questionTargets.short) * (Number(pattern.shortMarks) || 0)
-          + Math.min(questionTargets.long, Number(pattern.longAttemptLimit) || questionTargets.long) * (Number(pattern.longMarks) || 0),
+          Math.min(questionTargets.short, Number(activePattern.shortAttemptLimit) || questionTargets.short) * (Number(activePattern.shortMarks) || 0)
+          + Math.min(questionTargets.long, Number(activePattern.longAttemptLimit) || questionTargets.long) * (Number(activePattern.longMarks) || 0),
         obtainedMarks: 0,
         percentage: 0,
       },
@@ -1027,6 +1135,7 @@ export async function startTest(req, res) {
       totalQuestions: mcqQuestions.length, medium, generationJobId: attempt.generationJobId,
       deadlineAt, timeLimitMs,
       subjectiveUploadDeadlineAt: attempt.subjectiveUploadDeadlineAt,
+      subjectiveRequired: attempt.subjectiveRequired,
       currentQuestionIndex: 0,
       currentSection: 'mcq',
       boardPatternSnapshot,
@@ -1252,7 +1361,9 @@ export async function finishTest(req, res) {
     attempt.score = { totalMarks, obtainedMarks, percentage, correct, incorrect, skipped, easyCorrect, easyTotal, mediumCorrect, mediumTotal, hardCorrect, hardTotal };
     attempt.status = 'completed';
     attempt.finishedAt = new Date();
-    attempt.resultReleaseAt = new Date(attempt.finishedAt.getTime() + RESULT_RELEASE_DELAY_MS);
+    attempt.resultReleaseAt = new Date(
+      attempt.finishedAt.getTime() + (attempt.testType === 'chapter_mcq_practice' ? 0 : RESULT_RELEASE_DELAY_MS),
+    );
     if (attempt.subjectiveRequired && !attempt.subjectiveUploadDeadlineAt) {
       attempt.subjectiveUploadDeadlineAt = new Date(
         (attempt.deadlineAt?.getTime() || attempt.finishedAt.getTime()) + ANSWER_SHEET_UPLOAD_GRACE_MS,
@@ -1304,25 +1415,30 @@ export async function finishTest(req, res) {
     if (hardTotal > 0 && hardCorrect === 0) recommendations.push('Practice more Hard difficulty questions to improve advanced concepts.');
     if (combinedPercentage >= 75) recommendations.push('Great work! Try Hard Mode for an extra challenge.');
 
-    attempt.aiAnalysis = {
+    const isMcqPractice = attempt.testType === 'chapter_mcq_practice';
+    attempt.aiAnalysis = isMcqPractice ? {} : {
       overallRemark: `You scored ${combinedObtainedMarks}/${combinedTotalMarks} (${combinedPercentage}%) overall.`,
       strengths: strengths.length > 0 ? strengths : ['Keep practicing to build strengths!'],
       weakAreas: weakAreas.length > 0 ? weakAreas : ['No specific weak areas detected.'],
       recommendations: recommendations.length > 0 ? recommendations : ['Continue your current study pace.'],
       performanceLevel,
     };
-    attempt.aiAnalysisStatus = 'queued';
-    attempt.aiAnalysisEta = '2 min';
+    attempt.aiAnalysisStatus = isMcqPractice ? 'completed' : 'queued';
+    attempt.aiAnalysisEta = isMcqPractice ? '' : '2 min';
 
     await attempt.save();
-    analysisQueue.enqueueAttempt(attempt._id).catch((err) => console.warn('Auto analysis enqueue warning:', err?.message));
+    if (!isMcqPractice) {
+      analysisQueue.enqueueAttempt(attempt._id).catch((err) => console.warn('Auto analysis enqueue warning:', err?.message));
+    }
 
     res.json({
       success: true,
       attemptId: attempt._id,
-      resultAvailable: false,
+      resultAvailable: isMcqPractice,
       resultReleaseAt: attempt.resultReleaseAt,
-      message: 'Your result will be available after the evaluation period.',
+      message: isMcqPractice
+        ? 'Your MCQ practice result is ready.'
+        : 'Your result will be available after the evaluation period.',
       durationMs: attempt.durationMs,
     });
   } catch (err) {
@@ -1520,6 +1636,9 @@ export async function queueTestAnalysis(req, res) {
     const { attemptId } = req.params;
     const attempt = await TestAttempt.findOne({ _id: attemptId, userId: req.user._id, status: 'completed' });
     if (!attempt) return res.status(404).json({ error: 'Completed test attempt not found' });
+    if (attempt.testType === 'chapter_mcq_practice') {
+      return res.status(409).json({ error: 'MCQ practice results are scored from saved answer keys and do not use AI analysis.' });
+    }
 
     const queueInfo = await analysisQueue.enqueueAttempt(attempt._id);
     res.json({ success: true, message: 'Analysis queued successfully', queueInfo });

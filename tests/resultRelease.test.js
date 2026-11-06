@@ -16,6 +16,13 @@ test('objective-only results remain hidden for one hour', () => {
   assert.equal(getResultReleaseState(attempt, null, new Date('2025-01-01T11:00:00.000Z')).available, true);
 });
 
+test('MCQ chapter practice releases its deterministic result immediately', () => {
+  const attempt = { testType: 'chapter_mcq_practice', finishedAt };
+
+  assert.equal(getResultReleaseState(attempt, null, finishedAt).available, true);
+  assert.equal(getResultReleaseState(attempt, null, new Date(finishedAt.getTime() - 1)).available, false);
+});
+
 test('subjective results wait for evaluation after the result delay', () => {
   const attempt = {
     finishedAt,
