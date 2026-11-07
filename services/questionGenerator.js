@@ -9,8 +9,8 @@ import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 const LEASE_MS = 2 * 60 * 1000;
 const HEARTBEAT_MS = 30 * 1000;
 const INITIAL_MCQ_BATCH_SIZE = 3;
-const FOLLOW_UP_MCQ_BATCH_SIZE = 8;
-const SUBJECTIVE_BATCH_SIZE = 2;
+const FOLLOW_UP_MCQ_BATCH_SIZE = 2;
+const SUBJECTIVE_BATCH_SIZE = 1;
 const MAX_EMPTY_BATCHES = 3;
 const AUTOMATIC_RETRY_BASE_DELAY_MS = 30 * 1000;
 const AUTOMATIC_RETRY_MAX_DELAY_MS = 5 * 60 * 1000;
@@ -274,6 +274,8 @@ async function runWorker() {
         continue;
       } finally {
         clearInterval(heartbeat);
+                await new Promise(resolve => setTimeout(resolve, 6000));
+
       }
     }
   } finally {

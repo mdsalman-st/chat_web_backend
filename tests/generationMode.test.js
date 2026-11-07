@@ -3,6 +3,7 @@ import test, { afterEach } from 'node:test';
 import GenerationJob from '../models/GenerationJob.js';
 import Question from '../models/Question.js';
 import TestAttempt from '../models/TestAttempt.js';
+import AiKeyUsage from '../models/AiKeyUsage.js';
 import {
   buildChapterJobKey,
   getAutomaticGenerationRetryAt,
@@ -40,6 +41,7 @@ test('generation and attempt schemas persist MCQ practice modes', () => {
   assert.ok(TestAttempt.schema.path('testType').enumValues.includes('chapter_mcq_practice'));
   assert.ok(TestAttempt.schema.path('generationWaitStartedAt'));
   assert.ok(TestAttempt.schema.path('generationWaitDurationMs'));
+  assert.ok(AiKeyUsage.schema.path('cooldownUntil'));
   assert.ok(Question.schema.path('options').schema.path('hindiText'));
 });
 

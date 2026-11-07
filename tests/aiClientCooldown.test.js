@@ -9,6 +9,7 @@ import {
 
 const originalFetch = globalThis.fetch;
 const originalUsageUpdate = AiKeyUsage.findOneAndUpdate;
+const originalUsageFind = AiKeyUsage.find;
 const originalKeys = Object.fromEntries(
   ['GROQ_KEY', 'GEMINI_KEY_1', 'GEMINI_KEY_2', 'GEMINI_KEY_3'].map((key) => [key, process.env[key]]),
 );
@@ -16,6 +17,7 @@ const originalKeys = Object.fromEntries(
 afterEach(() => {
   globalThis.fetch = originalFetch;
   AiKeyUsage.findOneAndUpdate = originalUsageUpdate;
+  AiKeyUsage.find = originalUsageFind;
   for (const [key, value] of Object.entries(originalKeys)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -70,7 +72,22 @@ test('rate-limited providers are skipped on subsequent generation requests', asy
   process.env.GEMINI_KEY_1 = 'test-gemini-1';
   process.env.GEMINI_KEY_2 = 'test-gemini-2';
   process.env.GEMINI_KEY_3 = 'test-gemini-3';
-  AiKeyUsage.findOneAndUpdate = async () => null;
+  const persistedCooldowns = new Map();
+  AiKeyUsage.findOneAndUpdate = async (query, update) => {
+    if (update.$set.cooldownUntil) {
+      persistedCooldowns.set(query.keyIdentifier, {
+        keyIdentifier: query.keyIdentifier,
+        cooldownUntil: update.$set.cooldownUntil,
+      });
+    }
+    return null;
+  };
+  AiKeyUsage.find = () => ({
+    select() {
+      return this;
+    },
+    lean: async () => [...persistedCooldowns.values()],
+  });
   const requests = [];
   globalThis.fetch = async (url) => {
     requests.push(String(url));
@@ -87,6 +104,8 @@ test('rate-limited providers are skipped on subsequent generation requests', asy
   assert.equal(requests.length, 2);
   assert.match(requests[0], /groq\.com/);
   assert.match(requests[1], /key=test-gemini-1/);
+  assert.ok(persistedCooldowns.has('groq'));
+  assert.ok(persistedCooldowns.has('gemini_1'));
 
   await assert.rejects(
     executeAiJsonWithFailover({ prompt: 'generate another question' }),

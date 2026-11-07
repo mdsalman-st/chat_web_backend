@@ -102,11 +102,15 @@ export function getGroqQuotaCooldownMs(headers, totalTokens, averageTokens = tot
   return cooldowns.length ? Math.max(...cooldowns) : 0;
 }
 
-function recordGroqQuotaCooldown(headers, totalTokens) {
+async function recordGroqQuotaCooldown(headers, totalTokens) {
   const previousAverage = providerTokenAverages.get('groq') || totalTokens;
   const averageTokens = Math.max(1, Math.round(previousAverage * 0.7 + totalTokens * 0.3));
   providerTokenAverages.set('groq', averageTokens);
-  applyProviderCooldown('groq', getGroqQuotaCooldownMs(headers, totalTokens, averageTokens));
+  const cooldownMs = getGroqQuotaCooldownMs(headers, totalTokens, averageTokens);
+  applyProviderCooldown('groq', cooldownMs);
+  if (cooldownMs > 0) {
+    await recordKeyUsage('groq', false, false, new Date(Date.now() + cooldownMs));
+  }
 }
 
 function createProviderError(message, status, retryAfterMs) {
@@ -120,20 +124,40 @@ function getTodayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function recordKeyUsage(keyId, isRateLimit = false, isError = false) {
+async function recordKeyUsage(keyId, isRateLimit = false, isError = false, cooldownUntil = null) {
   try {
     const today = getTodayString();
     const inc = { requestCount: 1 };
     if (isRateLimit) inc.rateLimitCount = 1;
     if (isError) inc.errorCount = 1;
+    const set = { lastUsedAt: new Date() };
+    if (cooldownUntil) set.cooldownUntil = cooldownUntil;
 
     await AiKeyUsage.findOneAndUpdate(
       { keyIdentifier: keyId, date: today },
-      { $inc: inc, $set: { lastUsedAt: new Date() } },
+      { $inc: inc, $set: set },
       { upsert: true }
     );
-  } catch (e) {
-    // Non-blocking
+  } catch (error) {
+    console.error(`[AiClient] Failed to persist usage for ${keyId}:`, error);
+  }
+}
+
+async function restorePersistedCooldowns(providerNames) {
+  const now = new Date();
+  const records = await AiKeyUsage.find({
+    keyIdentifier: { $in: providerNames },
+    cooldownUntil: { $gt: now },
+  })
+    .select('keyIdentifier cooldownUntil')
+    .lean();
+
+  for (const record of records) {
+    const readyAt = new Date(record.cooldownUntil).getTime();
+    const providerName = record.keyIdentifier;
+    providerCooldowns.set(providerName, Math.max(providerCooldowns.get(providerName) || 0, readyAt));
+    const family = providerFamily(providerName);
+    providerFamilyCooldowns.set(family, Math.max(providerFamilyCooldowns.get(family) || 0, readyAt));
   }
 }
 
@@ -165,9 +189,14 @@ async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction, time
   if (!res.ok) {
     const errText = await res.text();
     const isRateLimit = res.status === 429;
-    await recordKeyUsage(keyIdentifier, isRateLimit, true);
     const retryAfterMs = getProviderRetryDelayMs({ status: res.status, headers: res.headers, body: errText });
     applyProviderCooldown(keyIdentifier, retryAfterMs);
+    await recordKeyUsage(
+      keyIdentifier,
+      isRateLimit,
+      true,
+      retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null,
+    );
     throw createProviderError(
       isRateLimit
         ? `Gemini ${keyIdentifier} Rate Limit (429)`
@@ -213,9 +242,14 @@ async function callGroq(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_M
   if (!res.ok) {
     const errText = await res.text();
     const isRateLimit = res.status === 429;
-    await recordKeyUsage('groq', isRateLimit, true);
     const retryAfterMs = getProviderRetryDelayMs({ status: res.status, headers: res.headers, body: errText });
     applyProviderCooldown('groq', retryAfterMs);
+    await recordKeyUsage(
+      'groq',
+      isRateLimit,
+      true,
+      retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null,
+    );
     throw createProviderError(
       isRateLimit ? 'Groq Rate Limit (429)' : `Groq HTTP ${res.status}: ${errText.slice(0, 150)}`,
       res.status,
@@ -224,8 +258,9 @@ async function callGroq(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_M
   }
 
   const data = await res.json();
+  const usageTokens = Number(data.usage?.total_tokens) || 1;
+  await recordGroqQuotaCooldown(res.headers, usageTokens);
   await recordKeyUsage('groq', false, false);
-  recordGroqQuotaCooldown(res.headers, Number(data.usage?.total_tokens) || 1);
 
   const text = data.choices?.[0]?.message?.content;
   if (!text) throw new Error('Groq returned empty content');
@@ -307,6 +342,7 @@ export async function executeAiJsonWithFailover({
     throw error;
   }
 
+  await restorePersistedCooldowns(providers.map((provider) => provider.name));
   let now = Date.now();
   let availableProviders = providers.filter((provider) => providerReadyAt(provider.name) <= now);
   if (!availableProviders.length) {
@@ -319,7 +355,7 @@ export async function executeAiJsonWithFailover({
     }
   }
   if (!availableProviders.length) {
-    const retryAfterMs = Math.max(1, Math.min(
+    const retryAfterMs = Math.max(1_000, Math.min(
       ...providers.map((provider) => providerReadyAt(provider.name) - now),
     ));
     const error = new Error('All AI providers are cooling down after rate limits or temporary outages.');

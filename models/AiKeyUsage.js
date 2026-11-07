@@ -20,6 +20,7 @@ const aiKeyUsageSchema = new mongoose.Schema(
     errorCount: { type: Number, default: 0 },
     rateLimitCount: { type: Number, default: 0 },
     lastUsedAt: { type: Date, default: Date.now },
+    cooldownUntil: { type: Date, default: null },
   },
   {
     timestamps: true,
