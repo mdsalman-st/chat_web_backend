@@ -163,6 +163,19 @@ const questionSchema = new mongoose.Schema(
 
 questionSchema.index({ boardCode: 1, classLevel: 1, subjectCode: 1, chapterNumber: 1, medium: 1, isActive: 1 });
 questionSchema.index({ status: 1, flagCount: 1 });
+// Keep official-paper questions; only generated practice questions expire.
+questionSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 604800, partialFilterExpression: { isAiGenerated: true } }
+);
+questionSchema.index({
+  boardCode: 1,
+  classLevel: 1,
+  subjectCode: 1,
+  chapterNumber: 1,
+  medium: 1,
+  createdAt: -1,
+});
 
 const Question = mongoose.model('Question', questionSchema);
 

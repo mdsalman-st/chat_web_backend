@@ -8,12 +8,13 @@ import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 
 const LEASE_MS = 2 * 60 * 1000;
 const HEARTBEAT_MS = 30 * 1000;
-const INITIAL_MCQ_BATCH_SIZE = 3;
-const FOLLOW_UP_MCQ_BATCH_SIZE = 2;
-const SUBJECTIVE_BATCH_SIZE = 1;
+const INITIAL_MCQ_BATCH_SIZE = 5;
+const FOLLOW_UP_MCQ_BATCH_SIZE = 5;
+const SUBJECTIVE_BATCH_SIZE = 2;
 const MAX_EMPTY_BATCHES = 3;
 const AUTOMATIC_RETRY_BASE_DELAY_MS = 30 * 1000;
 const AUTOMATIC_RETRY_MAX_DELAY_MS = 5 * 60 * 1000;
+const MAX_AUTOMATIC_RETRIES = 5;
 
 let workerScheduled = false;
 let workerRunning = false;
@@ -148,36 +149,54 @@ export async function queueOrGetChapterJob({
       },
     }, { new: true });
   } else {
-    job = await GenerationJob.findOneAndUpdate({ jobKey }, {
-      $set: {
-        jobKey,
-        boardCode: boardCode.toLowerCase(),
-        classLevel: String(classLevel),
-        stream: normalizedStream,
-        subjectCode: subjectCode.toLowerCase(),
-        chapterNumber: Number(chapterNumber),
-        medium: normMedium,
-        isHardMode: !!isHardMode,
-        generationMode,
-        status: 'queued',
-        generationStage: 'mcq',
-        progressPercent: 0,
-        progressMessage: 'Waiting for question generation…',
-        targetCount: targets.mcq,
-        targetShortCount: targets.short,
-        targetLongCount: targets.long,
-        marksPerMcq: Number(marksPerMcq) || 1,
-        shortMarks: Number(shortMarks) || 2,
-        longMarks: Number(longMarks) || 5,
-        workerLeaseUntil: null,
-        automaticRetryCount: 0,
-        emptyBatchCount: 0,
-        nextRetryAt: null,
-        startedAt: null,
-        completedAt: null,
-        error: null,
-      },
-    }, { upsert: true, new: true, setDefaultsOnInsert: true });
+    try {
+      job = await GenerationJob.findOneAndUpdate({ jobKey }, {
+        $set: {
+          jobKey,
+          boardCode: boardCode.toLowerCase(),
+          classLevel: String(classLevel),
+          stream: normalizedStream,
+          subjectCode: subjectCode.toLowerCase(),
+          chapterNumber: Number(chapterNumber),
+          medium: normMedium,
+          isHardMode: !!isHardMode,
+          generationMode,
+          status: 'queued',
+          generationStage: 'mcq',
+          progressPercent: 0,
+          progressMessage: 'Waiting for question generation…',
+          targetCount: targets.mcq,
+          targetShortCount: targets.short,
+          targetLongCount: targets.long,
+          marksPerMcq: Number(marksPerMcq) || 1,
+          shortMarks: Number(shortMarks) || 2,
+          longMarks: Number(longMarks) || 5,
+          workerLeaseUntil: null,
+          automaticRetryCount: 0,
+          emptyBatchCount: 0,
+          nextRetryAt: null,
+          startedAt: null,
+          completedAt: null,
+          error: null,
+        },
+      }, { upsert: true, new: true, setDefaultsOnInsert: true });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      const existingJob = await GenerationJob.findOne({ jobKey });
+      if (!existingJob) throw error;
+      job = await GenerationJob.findByIdAndUpdate(existingJob._id, {
+        $max: {
+          targetCount: targets.mcq,
+          targetShortCount: targets.short,
+          targetLongCount: targets.long,
+        },
+        $set: {
+          marksPerMcq: Number(marksPerMcq) || 1,
+          shortMarks: Number(shortMarks) || 2,
+          longMarks: Number(longMarks) || 5,
+        },
+      }, { new: true });
+    }
   }
 
   scheduleWorker();
@@ -259,15 +278,23 @@ async function runWorker() {
         const retryCount = Number(job.automaticRetryCount) || 0;
         const nextRetryAt = getAutomaticGenerationRetryAt(retryCount, Date.now(), error.retryAfterMs);
         const nextRetryCount = retryCount + 1;
+        const willRetry = nextRetryCount < MAX_AUTOMATIC_RETRIES;
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(`[QuestionGeneration] Job ${job._id} generation attempt ${nextRetryCount} failed; preserving its questions and retrying at ${nextRetryAt.toISOString()}:`, error);
+        console.error(
+          `[QuestionGeneration] Job ${job._id} generation attempt ${nextRetryCount} failed; ${
+            willRetry ? `retrying at ${nextRetryAt.toISOString()}` : 'marking the job failed'
+          }:`,
+          error
+        );
         await GenerationJob.updateOne({ _id: job._id }, {
           $set: {
-            status: 'queued',
+            status: willRetry ? 'queued' : 'failed',
             automaticRetryCount: nextRetryCount,
-            nextRetryAt,
+            nextRetryAt: willRetry ? nextRetryAt : null,
             error: errorMessage,
-            progressMessage: `Question generation is temporarily unavailable. Automatically retrying in ${Math.ceil((nextRetryAt.getTime() - Date.now()) / 1000)} seconds. Existing questions are preserved.`,
+            progressMessage: willRetry
+              ? `Question generation is temporarily unavailable. Automatically retrying in ${Math.ceil((nextRetryAt.getTime() - Date.now()) / 1000)} seconds. Existing questions are preserved.`
+              : 'Question generation failed after repeated attempts. Existing questions are preserved; please retry.',
             workerLeaseUntil: null,
           },
         });
@@ -330,7 +357,7 @@ Return strict JSON: { "questions": [ ${schema} ] }`;
     prompt,
     systemInstruction: `Create clear, syllabus-bound examination questions for ${boardName}.`,
     taskType: 'heavy',
-    timeoutMs: stage === 'mcq' && batchSize <= INITIAL_MCQ_BATCH_SIZE ? 30_000 : 60_000,
+    timeoutMs: 90_000,
   });
   const candidates = aiResponse.result?.questions;
   if (!Array.isArray(candidates) || candidates.length === 0) {

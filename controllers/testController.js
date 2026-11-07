@@ -1089,7 +1089,8 @@ export async function startTest(req, res) {
       });
     }
 
-    // 🚨 2. NAYA TEST LOGIC 🚨
+    // 🚨 2. NAYA TEST LOGIC WITH CACHING, USER EXCLUSION & CONCURRENCY LOCKING 🚨
+    const requiredMcqCount = isMcqPractice ? MCQ_PRACTICE_QUESTION_COUNT : (activePattern.mcqCount || 10);
     const query = {
       classLevel: String(classLevel),
       stream,
@@ -1100,48 +1101,166 @@ export async function startTest(req, res) {
       status: 'verified',
     };
     if (chapterNumber) query.chapterNumber = Number(chapterNumber);
+    if (isMcqPractice) query.type = 'mcq';
 
-    let questions = await Question.find({ boardCode: boardCode.toLowerCase(), ...query }).lean();
-    if (!linkedGenerationJob && questions.length === 0 && boardCode.toLowerCase() !== 'ncert_default') {
-      questions = await Question.find({ boardCode: 'ncert_default', ...query }).lean();
-    }
-    if (questions.length === 0) return res.status(404).json({ error: 'No questions available.' });
-    if (isMcqPractice) questions = questions.filter((question) => question.type === 'mcq');
+    // --- USER EXCLUSION: Get question IDs the user has already attempted ---
+    const pastAttempts = await TestAttempt.find({
+      userId: req.user._id,
+      boardCode: boardCode.toLowerCase(),
+      classLevel: String(classLevel),
+      stream,
+      subjectCode: subjectCode.toLowerCase(),
+      chapterNumber: chapterNumber ? Number(chapterNumber) : null,
+      medium,
+      isHardMode: !!isHardMode,
+      status: { $in: ['completed', 'abandoned'] },
+    }).select('questionIds').lean();
 
-    const linkedJob = linkedGenerationJob
-      ? await GenerationJob.findById(linkedGenerationJob._id).lean()
-      : null;
-    const configuredTargets = {
-      mcq: Math.max(0, Number(linkedJob?.targetCount ?? activePattern.mcqCount) || 0),
-      short: Math.max(0, Number(linkedJob?.targetShortCount ?? (activePattern.hasShortAnswer ? activePattern.shortCount : 0)) || 0),
-      long: Math.max(0, Number(linkedJob?.targetLongCount ?? (activePattern.hasLongAnswer ? activePattern.longCount : 0)) || 0),
-    };
-    const questionTargets = {
-      mcq: isMcqPractice
-        ? MCQ_PRACTICE_QUESTION_COUNT
-        : configuredTargets.mcq || questions.filter((question) => question.type === 'mcq').length,
-      short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
-      long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
-    };
-    const shuffle = (items) => {
-      const result = [...items];
-      for (let index = result.length - 1; index > 0; index--) {
-        const swapIndex = Math.floor(Math.random() * (index + 1));
-        [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+    const attemptedQuestionIds = new Set();
+    for (const attempt of pastAttempts) {
+      for (const qid of attempt.questionIds) {
+        attemptedQuestionIds.add(qid.toString());
       }
-      return result;
-    };
-    const mcqQuestions = shuffle(questions.filter((question) => question.type === 'mcq'))
-      .slice(0, questionTargets.mcq);
-    const shortQuestions = shuffle(questions.filter((question) => question.type === 'short'))
-      .slice(0, questionTargets.short);
-    const longQuestions = shuffle(questions.filter((question) => question.type === 'long'))
-      .slice(0, questionTargets.long);
-    if (isMcqPractice && mcqQuestions.length < Math.min(3, MCQ_PRACTICE_QUESTION_COUNT)) {
-      return res.status(409).json({ error: 'At least three MCQs must be ready before starting chapter practice.' });
     }
-    const subjectiveQuestions = [...shortQuestions, ...longQuestions];
-    questions = [...mcqQuestions, ...subjectiveQuestions];
+
+    // --- CACHE LOOKUP: Find available questions excluding user's past attempts ---
+    const fetchAvailableQuestions = async (targetBoardCode = boardCode.toLowerCase()) => {
+      let questionQuery = Question.find({
+        boardCode: targetBoardCode,
+        ...query,
+        _id: { $nin: Array.from(attemptedQuestionIds) },
+      }).sort({ createdAt: 1, _id: 1 });
+      if (isMcqPractice) questionQuery = questionQuery.limit(requiredMcqCount);
+      return questionQuery.lean();
+    };
+
+    let questions = await fetchAvailableQuestions();
+    if (!linkedGenerationJob && questions.length === 0 && boardCode.toLowerCase() !== 'ncert_default') {
+      const fallbackQuestions = await fetchAvailableQuestions('ncert_default');
+      if (fallbackQuestions.length > 0) {
+        questions = fallbackQuestions;
+      }
+    }
+
+    // --- CACHE HIT: If we have enough questions, return them immediately ---
+    const mcqQuestionsAvailable = questions.filter((q) => q.type === 'mcq');
+    
+    if (mcqQuestionsAvailable.length >= requiredMcqCount) {
+      // We have enough cached questions - use them
+      const linkedJob = linkedGenerationJob
+        ? await GenerationJob.findById(linkedGenerationJob._id).lean()
+        : null;
+      if (linkedJob) linkedGenerationJob = linkedJob;
+      const configuredTargets = {
+        mcq: Math.max(0, Number(linkedJob?.targetCount ?? activePattern.mcqCount) || 0),
+        short: Math.max(0, Number(linkedJob?.targetShortCount ?? (activePattern.hasShortAnswer ? activePattern.shortCount : 0)) || 0),
+        long: Math.max(0, Number(linkedJob?.targetLongCount ?? (activePattern.hasLongAnswer ? activePattern.longCount : 0)) || 0),
+      };
+      const questionTargets = {
+        mcq: requiredMcqCount,
+        short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
+        long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
+      };
+      const mcqQuestions = questions.filter((question) => question.type === 'mcq')
+        .slice(0, questionTargets.mcq);
+      const shortQuestions = questions.filter((question) => question.type === 'short')
+        .slice(0, questionTargets.short);
+      const longQuestions = questions.filter((question) => question.type === 'long')
+        .slice(0, questionTargets.long);
+      if (isMcqPractice && mcqQuestions.length < Math.min(3, MCQ_PRACTICE_QUESTION_COUNT)) {
+        return res.status(409).json({ error: 'At least three MCQs must be ready before starting chapter practice.' });
+      }
+      const subjectiveQuestions = [...shortQuestions, ...longQuestions];
+      questions = [...mcqQuestions, ...subjectiveQuestions];
+    } else {
+      // --- CACHE MISS: Need to generate questions ---
+      if (!chapterNumber) return res.status(404).json({ error: 'No questions available.' });
+
+      const generationMode = isMcqPractice ? 'mcq_practice' : 'board_exam';
+      const attemptedMcqCount = await Question.countDocuments({
+        boardCode: boardCode.toLowerCase(),
+        ...query,
+        type: 'mcq',
+        _id: { $in: Array.from(attemptedQuestionIds) },
+      });
+
+      // The unique jobKey and worker lease ensure concurrent misses share one generation job.
+      const generationJob = await queueOrGetChapterJob({
+        boardCode,
+        classLevel,
+        stream,
+        subjectCode,
+        chapterNumber: Number(chapterNumber),
+        medium,
+        isHardMode,
+        generationMode,
+        targetCount: requiredMcqCount + attemptedMcqCount,
+        targetShortCount: activePattern.hasShortAnswer ? activePattern.shortCount : 0,
+        targetLongCount: activePattern.hasLongAnswer ? activePattern.longCount : 0,
+        marksPerMcq: activePattern.marksPerMcq || 1,
+        shortMarks: activePattern.shortMarks || 2,
+        longMarks: activePattern.longMarks || 5,
+      });
+      linkedGenerationJob = generationJob;
+
+      // If we still don't have enough questions, wait for generation to complete
+      if (questions.filter(q => q.type === 'mcq').length < requiredMcqCount) {
+        // Poll for job completion (max 30 seconds, check every 2 seconds)
+        const maxWaitMs = 30000;
+        const pollIntervalMs = 2000;
+        const startTime = Date.now();
+        
+        while (Date.now() - startTime < maxWaitMs) {
+          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+          
+          const currentJob = await GenerationJob.findById(generationJob._id).lean();
+          if (currentJob && currentJob.status === 'completed') {
+            // Re-fetch questions after generation completes
+            const refreshedQuestions = await fetchAvailableQuestions();
+            if (refreshedQuestions.filter(q => q.type === 'mcq').length >= requiredMcqCount) {
+              questions = refreshedQuestions;
+              break;
+            }
+            return res.status(503).json({ error: 'Not enough questions generated yet. Please try again in a moment.' });
+          } else if (currentJob && currentJob.status === 'failed') {
+            return res.status(503).json({ error: 'Question generation failed. Please try again later.' });
+          }
+        }
+        
+        // Final check after polling
+        const finalMcqQuestions = questions.filter(q => q.type === 'mcq');
+        if (finalMcqQuestions.length < requiredMcqCount) {
+          return res.status(503).json({ error: 'Not enough questions generated yet. Please try again in a moment.' });
+        }
+      }
+
+      // Now select questions from the (now sufficient) pool
+      const linkedJob = linkedGenerationJob
+        ? await GenerationJob.findById(linkedGenerationJob._id).lean()
+        : null;
+      if (linkedJob) linkedGenerationJob = linkedJob;
+      const configuredTargets = {
+        mcq: Math.max(0, Number(linkedJob?.targetCount ?? activePattern.mcqCount) || 0),
+        short: Math.max(0, Number(linkedJob?.targetShortCount ?? (activePattern.hasShortAnswer ? activePattern.shortCount : 0)) || 0),
+        long: Math.max(0, Number(linkedJob?.targetLongCount ?? (activePattern.hasLongAnswer ? activePattern.longCount : 0)) || 0),
+      };
+      const questionTargets = {
+        mcq: requiredMcqCount,
+        short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
+        long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
+      };
+      const mcqQuestions = questions.filter((question) => question.type === 'mcq')
+        .slice(0, questionTargets.mcq);
+      const shortQuestions = questions.filter((question) => question.type === 'short')
+        .slice(0, questionTargets.short);
+      const longQuestions = questions.filter((question) => question.type === 'long')
+        .slice(0, questionTargets.long);
+      if (isMcqPractice && mcqQuestions.length < Math.min(3, MCQ_PRACTICE_QUESTION_COUNT)) {
+        return res.status(409).json({ error: 'At least three MCQs must be ready before starting chapter practice.' });
+      }
+      const subjectiveQuestions = [...shortQuestions, ...longQuestions];
+      questions = [...mcqQuestions, ...subjectiveQuestions];
+    }
 
     let subjectName = subjectCode;
     let chapterTitle = chapterNumber ? `Chapter ${chapterNumber}` : 'Full Paper';
