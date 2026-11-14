@@ -155,6 +155,11 @@ const questionSchema = new mongoose.Schema(
     isVVI: { type: Boolean, default: false },
     isMVVI: { type: Boolean, default: false },
     officialPaperSource: { type: String, default: '' },
+
+    // Smart Demand Tracking (Preserves popular chapter questions from deletion)
+    attemptCount: { type: Number, default: 0, index: true },
+    lastAccessedAt: { type: Date, default: Date.now, index: true },
+    keepForever: { type: Boolean, default: false, index: true },
   },
   {
     timestamps: true,
@@ -163,11 +168,11 @@ const questionSchema = new mongoose.Schema(
 
 questionSchema.index({ boardCode: 1, classLevel: 1, subjectCode: 1, chapterNumber: 1, medium: 1, isActive: 1 });
 questionSchema.index({ status: 1, flagCount: 1 });
-// Keep official-paper questions; only generated practice questions expire.
-questionSchema.index(
-  { createdAt: 1 },
-  { expireAfterSeconds: 604800, partialFilterExpression: { isAiGenerated: true } }
-);
+
+// Smart Demand-based Index (Replaces blind static 7-day TTL index)
+// High-demand/frequently-practiced questions are preserved permanently
+questionSchema.index({ isAiGenerated: 1, keepForever: 1, attemptCount: 1, lastAccessedAt: 1 });
+
 questionSchema.index({
   boardCode: 1,
   classLevel: 1,

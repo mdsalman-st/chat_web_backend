@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
 
 export function generateToken(userId) {
-  // Token ab 7 din me expire ho jayega (Security Fix)
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  // Professional standard: 30 days session validity (no frequent logouts)
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
 }
 
 export function verifyToken(token) {

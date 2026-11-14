@@ -902,6 +902,15 @@ export async function getChapterPracticeQuestions(req, res) {
     let notice = null;
     if (questions.length > 0 && questions.length < 5) notice = `This chapter currently has ${questions.length} questions.`;
 
+    // Smart Demand Tracking: Update demand metrics asynchronously
+    if (questions.length > 0) {
+      const qIds = questions.map((q) => q._id);
+      Question.updateMany(
+        { _id: { $in: qIds } },
+        { $inc: { attemptCount: 1 }, $set: { lastAccessedAt: new Date() } }
+      ).catch((err) => console.error('Practice demand track error:', err.message));
+    }
+
     res.json({
       success: true, count: questions.length, chapterNumber, subjectCode, medium, usedFallback, notice,
       questions: questions.map((q) => ({
@@ -1324,6 +1333,18 @@ export async function startTest(req, res) {
         percentage: 0,
       },
     });
+
+    // Smart Demand Tracking: Increment demand & preserve active chapter questions permanently
+    const activeQIds = questions.map((q) => q._id);
+    if (activeQIds.length > 0) {
+      Question.updateMany(
+        { _id: { $in: activeQIds } },
+        {
+          $inc: { attemptCount: 1 },
+          $set: { lastAccessedAt: new Date(), keepForever: true },
+        }
+      ).catch((err) => console.error('Question demand track error:', err.message));
+    }
 
     res.json({
       success: true, attemptId: attempt._id, testType, subjectName, chapterTitle,

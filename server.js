@@ -23,6 +23,7 @@ import adminExtrasRoutes from './routes/adminExtras.js';
 import feedbackRoute from './routes/feedback.js';
 import { startQuestionGenerationWorker } from './services/questionGenerator.js';
 import { startSubjectiveEvaluationWorker } from './services/handwritingEvaluator.js';
+import { initSmartQuestionCleaner } from './services/questionCleaner.js';
 
 dotenv.config();
 
@@ -157,6 +158,7 @@ async function start() {
   await connectDB();
   startQuestionGenerationWorker();
   startSubjectiveEvaluationWorker();
+  initSmartQuestionCleaner();
   const httpServer = http.createServer(app);
 
   httpServer.listen(PORT, () => {
