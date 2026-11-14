@@ -471,7 +471,7 @@ export async function executeAiJsonWithFailover({
 
   // 4. NVIDIA NIM (Bulk & Heavy Batching)
   if (nvidiaKey) {
-    providers.push({ name: 'nvidia', fn: () => callNvidia(nvidiaKey, prompt, systemInstruction, timeoutMs) });
+    providers.push({ name: 'nvidia', fn: () => callNvidia(nvidiaKey, prompt, systemInstruction, Math.min(timeoutMs, 12000)) });
   }
 
   const errors = [];
