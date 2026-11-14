@@ -6,7 +6,16 @@ import {
   getMe,
   updateDetails,
   updateCredentials,
-  updateProfile, 
+  updateProfile,
+  forgotPassword,
+  resetPassword,
+  requestEmailChange,
+  verifyEmailChange,
+  requestPasswordOtp,
+  verifyPasswordOtp,
+  getPlatformConfig,
+  updatePlatformConfig,
+ 
   checkUsername,
 } from '../controllers/authController.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -56,5 +65,18 @@ router.put('/credentials', protect, sanitizeInput, updateCredentials);
 
 // Admin Profile Update Route
 router.put('/profile', protect, sanitizeInput, updateProfile); 
+
+
+// Public Password Reset & Config Routes
+router.post('/forgot-password', strictAuthLimiter, sanitizeInput, forgotPassword);
+router.post('/reset-password', strictAuthLimiter, sanitizeInput, resetPassword);
+router.get('/platform-config', getPlatformConfig);
+
+// Protected Email & Password Change with OTP
+router.post('/request-email-change', protect, strictAuthLimiter, sanitizeInput, requestEmailChange);
+router.post('/verify-email-change', protect, strictAuthLimiter, sanitizeInput, verifyEmailChange);
+router.post('/request-password-otp', protect, strictAuthLimiter, sanitizeInput, requestPasswordOtp);
+router.post('/verify-password-otp', protect, strictAuthLimiter, sanitizeInput, verifyPasswordOtp);
+router.put('/platform-config', protect, sanitizeInput, updatePlatformConfig);
 
 export default router;

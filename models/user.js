@@ -96,6 +96,21 @@ const userSchema = new mongoose.Schema(
       default: null,
       select: false,
     },
+    resetOtp: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    resetOtpExpiry: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+    pendingEmail: {
+      type: String,
+      default: null,
+      select: false,
+    },
     // ==========================================
 
     lastLogin: Date,
