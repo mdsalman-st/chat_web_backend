@@ -177,8 +177,9 @@ async function restorePersistedCooldowns(providerNames) {
 
 // Clean helper to safely extract JSON from LLM output (handles codeblocks ```json ... ```)
 function extractJson(text) {
+  if (text && typeof text === 'object') return text;
   if (!text) throw new Error('AI returned empty response');
-  const clean = String(text).trim();
+  const clean = typeof text === 'string' ? text.trim() : JSON.stringify(text);
   try {
     return JSON.parse(clean);
   } catch {
@@ -206,9 +207,8 @@ function extractJson(text) {
 async function callGroq(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_MS) {
   const url = 'https://api.groq.com/openai/v1/chat/completions';
   const messages = [];
-  if (systemInstruction) {
-    messages.push({ role: 'system', content: systemInstruction });
-  }
+  const sysContent = (systemInstruction ? `${systemInstruction}\n` : '') + 'You are an educational examination question generator. You must return strictly valid JSON matching the requested schema.';
+  messages.push({ role: 'system', content: sysContent });
   messages.push({ role: 'user', content: prompt });
 
   const res = await fetchFromProvider('groq', url, {
@@ -336,7 +336,8 @@ async function callCloudflare(apiKey, accountId, prompt, systemInstruction, time
 
   const data = await res.json();
   await recordKeyUsage('cloudflare', false, false);
-  const text = data.result?.response || data.result?.choices?.[0]?.message?.content || JSON.stringify(data.result);
+  const text = data.result?.choices?.[0]?.message?.content ?? data.result?.response ?? data.result;
+  if (typeof text === 'object' && text !== null) return text;
   return extractJson(text);
 }
 
@@ -381,7 +382,8 @@ async function callNvidia(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT
 
   const data = await res.json();
   await recordKeyUsage('nvidia', false, false);
-  const text = data.choices?.[0]?.message?.content;
+  const msg = data.choices?.[0]?.message;
+  const text = msg?.content || msg?.reasoning_content;
   return extractJson(text);
 }
 
