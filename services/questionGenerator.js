@@ -11,14 +11,35 @@ const HEARTBEAT_MS = 30 * 1000;
 const INITIAL_MCQ_BATCH_SIZE = 5;
 const FOLLOW_UP_MCQ_BATCH_SIZE = 5;
 const SUBJECTIVE_BATCH_SIZE = 2;
-const MAX_EMPTY_BATCHES = 3;
+const MAX_EMPTY_BATCHES = 6; // ⭐ BUG FIX 1: 3 se badhakar 6 kiya taaki AI ko zyada chances mile
 const AUTOMATIC_RETRY_BASE_DELAY_MS = 30 * 1000;
 const AUTOMATIC_RETRY_MAX_DELAY_MS = 5 * 60 * 1000;
 const MAX_AUTOMATIC_RETRIES = 5;
+const MAX_SOURCE_TEXT_CHARS = 18_000;
 
 let workerScheduled = false;
 let workerRunning = false;
 let recoveryTimer = null;
+
+function buildSourceTextExcerpt(sourceText) {
+  const normalized = String(sourceText || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= MAX_SOURCE_TEXT_CHARS) return normalized;
+
+  // Keep material from the beginning, middle, and end of longer chapters so
+  // every generated batch is grounded in more than just the opening pages.
+  const chunkSize = Math.floor(MAX_SOURCE_TEXT_CHARS / 3);
+  const lastStart = Math.max(0, normalized.length - chunkSize);
+  const middleStart = Math.max(
+    chunkSize,
+    Math.floor((normalized.length - chunkSize) / 2),
+  );
+  return [
+    '[Beginning of chapter]\n' + normalized.slice(0, chunkSize),
+    '[Middle of chapter]\n' + normalized.slice(middleStart, middleStart + chunkSize),
+    '[End of chapter]\n' + normalized.slice(lastStart),
+  ].join('\n\n');
+}
 
 export function getAutomaticGenerationRetryAt(retryCount, now = Date.now(), providerRetryAfterMs = 0) {
   const retryExponent = Math.min(Math.max(0, Number(retryCount) || 0), 4);
@@ -301,8 +322,7 @@ async function runWorker() {
         continue;
       } finally {
         clearInterval(heartbeat);
-                await new Promise(resolve => setTimeout(resolve, 6000));
-
+        await new Promise(resolve => setTimeout(resolve, 6000));
       }
     }
   } finally {
@@ -328,7 +348,7 @@ export function startQuestionGenerationWorker() {
   recoveryTimer.unref?.();
 }
 
-async function generateBatch({ job, stage, batchSize, chapterTitle, boardName, scope }) {
+async function generateBatch({ job, stage, batchSize, chapterTitle, sourceText, boardName, scope }) {
   const isMcq = stage === 'mcq';
   const typeLabel = isMcq ? 'multiple-choice questions' : `${stage}-answer subjective questions`;
   const previousQuestions = await Question.find({
@@ -344,21 +364,43 @@ async function generateBatch({ job, stage, batchSize, chapterTitle, boardName, s
   const previousQuestionTexts = previousQuestions
     .map((question) => String(question.questionText || '').trim())
     .filter(Boolean);
+
+  // ⭐ BUG FIX 2: Sirf single language ka schema
   const schema = isMcq
-    ? '{ "type":"mcq", "questionText":"...", "hindiQuestionText":"...", "options":[{"key":"A","text":"...", "hindiText":"..."},{"key":"B","text":"...", "hindiText":"..."},{"key":"C","text":"...", "hindiText":"..."},{"key":"D","text":"...", "hindiText":"..."}], "correctOption":"A", "explanation":"...", "marks":1, "difficulty":"Medium", "subtopic":"..." }'
-    : `{ "type":"${stage}", "questionText":"...", "hindiQuestionText":"...", "modelAnswer":"...", "hindiModelAnswer":"...", "marks":${stage === 'short' ? job.shortMarks || 2 : job.longMarks || 5}, "difficulty":"Medium", "subtopic":"..." }`;
+    ? `{ "type":"mcq", "questionText":"...", "options":[{"key":"A","text":"..."},{"key":"B","text":"..."},{"key":"C","text":"..."},{"key":"D","text":"..."}], "correctOption":"A", "explanation":"...", "marks":1, "difficulty":"Medium", "subtopic":"..." }`
+    : `{ "type":"${stage}", "questionText":"...", "modelAnswer":"...", "marks":${stage === 'short' ? job.shortMarks || 2 : job.longMarks || 5}, "difficulty":"Medium", "subtopic":"..." }`;
+    
+  const chapterSource = buildSourceTextExcerpt(sourceText);
+  if (!chapterSource) {
+    throw new Error(`No extracted NCERT source text is available for ${chapterTitle}.`);
+  }
+
+  // ⭐ BUG FIX 3: Strict Language Instruction
+  const langInstruction = job.medium === 'Hindi'
+    ? 'सभी प्रश्न और विकल्प केवल हिंदी में लिखें। कोई अंग्रेज़ी अनुवाद न दें।'
+    : 'Write all questions and options ONLY in English. Do not provide any Hindi translation.';
+
   const prompt = `Generate EXACTLY ${batchSize} new ${typeLabel} for the selected board and chapter.
 Board: ${boardName}
 Class ${job.classLevel}${job.stream ? ` | Stream: ${job.stream}` : ''} | Subject ${job.subjectCode} | Chapter ${job.chapterNumber} (${chapterTitle}) | Language: ${job.medium}
-Keep questionText and option text in English. Provide a complete, natural Hindi translation in hindiQuestionText and in every option's hindiText. The student-facing UI selects the translation matching the chosen medium. Questions must stay within this chapter's syllabus, avoid duplicates, and match the board's expected difficulty.
+${langInstruction}
+
+Base every question, answer, and explanation only on the NCERT chapter source below. Do not add facts that are absent from it. Questions must stay within this chapter's syllabus, avoid duplicates, and match the board's expected difficulty.
+
+NCERT chapter source:
+---
+${chapterSource}
+---
 ${previousQuestionTexts.length ? `Do not repeat or paraphrase these already generated questions:\n${previousQuestionTexts.map((question) => `- ${question.slice(0, 250)}`).join('\n')}` : ''}
 Return strict JSON: { "questions": [ ${schema} ] }`;
+
   const aiResponse = await executeAiJsonWithFailover({
     prompt,
     systemInstruction: `Create clear, syllabus-bound examination questions for ${boardName}.`,
     taskType: 'heavy',
     timeoutMs: 90_000,
   });
+
   const candidates = aiResponse.result?.questions;
   if (!Array.isArray(candidates) || candidates.length === 0) {
     throw new Error(`AI returned no ${stage} questions.`);
@@ -366,22 +408,24 @@ Return strict JSON: { "questions": [ ${schema} ] }`;
 
   const previousQuestionKeys = new Set(previousQuestionTexts.map((text) => text.toLowerCase().replace(/\s+/g, ' ')));
   let inserted = 0;
+  
   for (const candidate of candidates) {
     if (inserted >= batchSize) break;
+    
+    // ⭐ BUG FIX 4: Type Validation (Agar AI short bhej de mcq ki jagah toh skip karo)
+    if (candidate.type && String(candidate.type).toLowerCase() !== stage) continue;
+
     const questionText = typeof candidate.questionText === 'string' ? candidate.questionText.trim() : '';
-    const hindiQuestionText = typeof candidate.hindiQuestionText === 'string'
-      ? candidate.hindiQuestionText.trim()
-      : '';
     const marks = Number(candidate.marks);
     if (!questionText || !Number.isFinite(marks) || marks <= 0) continue;
-    if (job.medium === 'Hindi' && !hindiQuestionText) continue;
     if (previousQuestionKeys.has(questionText.toLowerCase().replace(/\s+/g, ' '))) continue;
 
+    // ⭐ BUG FIX 5: Single language save logic
     const questionFields = {
       ...scope,
       isHardMode: !!job.isHardMode,
       questionText,
-      hindiQuestionText,
+      hindiQuestionText: job.medium === 'Hindi' ? questionText : '', 
       difficulty: ['Easy', 'Medium', 'Hard'].includes(candidate.difficulty) ? candidate.difficulty : 'Medium',
       subtopic: typeof candidate.subtopic === 'string' ? candidate.subtopic.trim() : '',
       chapterTitle,
@@ -400,24 +444,25 @@ Return strict JSON: { "questions": [ ${schema} ] }`;
       const normalizedOptions = options.map((option) => ({
         key: String(option.key || '').toUpperCase(),
         text: String(option.text || '').trim(),
-        hindiText: String(option.hindiText || '').trim(),
+        hindiText: job.medium === 'Hindi' ? String(option.text || '').trim() : '',
       }));
       const keys = new Set(normalizedOptions.map((option) => option.key));
       const correctOption = String(candidate.correctOption || '').toUpperCase();
+      
       if (normalizedOptions.length !== 4
         || ['A', 'B', 'C', 'D'].some((key) => !keys.has(key))
         || normalizedOptions.some((option) => !option.text)
-        || (job.medium === 'Hindi' && normalizedOptions.some((option) => !option.hindiText))
         || !keys.has(correctOption)) continue;
+        
       questionFields.options = normalizedOptions;
       questionFields.correctOption = correctOption;
       questionFields.explanation = String(candidate.explanation || '');
       questionFields.marks = Number(job.marksPerMcq) || marks;
     } else {
-      const modelAnswer = String(candidate.modelAnswer || candidate.hindiModelAnswer || '').trim();
+      const modelAnswer = String(candidate.modelAnswer || '').trim();
       if (!modelAnswer) continue;
       questionFields.modelAnswer = modelAnswer;
-      questionFields.hindiModelAnswer = String(candidate.hindiModelAnswer || '').trim();
+      questionFields.hindiModelAnswer = job.medium === 'Hindi' ? modelAnswer : '';
     }
 
     const result = await Question.updateOne(
@@ -486,11 +531,13 @@ async function runGenerationAndVerification(job) {
       stage: nextBatch.stage,
       batchSize: nextBatch.batchSize,
       chapterTitle,
+      sourceText: chapter?.sourceText, // ⭐ SEEDHA DB SE SOURCE TEXT USE KAR RAHA HAI
       boardName: boardConfig.name,
       scope,
     });
     counts[nextBatch.stage] = await countQuestions(scope, nextBatch.stage);
     const emptyBatchCount = inserted ? 0 : (Number(job.emptyBatchCount) || 0) + 1;
+    
     if (emptyBatchCount >= MAX_EMPTY_BATCHES) {
       if (counts.mcq >= 3) {
         console.log(`[QuestionGeneration] Job ${job._id} has ${counts.mcq} questions ready. Marking completed.`);

@@ -22,26 +22,19 @@ const MAX_INLINE_COOLDOWN_WAIT_MS = 10_000;
 const TIMEOUT_MS = 60000; // 60s for question generation
 
 function providerFamily(providerName) {
-  if (providerName.startsWith('gemini_')) return 'gemini';
-  if (providerName.startsWith('cloudflare')) return 'cloudflare';
-  if (providerName.startsWith('nvidia')) return 'nvidia';
+  // Each key is treated independently so one key's limit never locks out sibling keys
   return providerName;
 }
 
 function providerMinIntervalMs(providerName) {
-  const family = providerFamily(providerName);
-  if (family === 'gemini') return Number(process.env.AI_GEMINI_MIN_INTERVAL_MS) || 7_000;
-  if (family === 'groq') return Number(process.env.AI_GROQ_MIN_INTERVAL_MS) || 3_000;
-  if (family === 'cloudflare') return Number(process.env.AI_CLOUDFLARE_MIN_INTERVAL_MS) || 1_000;
-  if (family === 'nvidia') return Number(process.env.AI_NVIDIA_MIN_INTERVAL_MS) || 2_000;
-  return 2_000;
+  if (providerName === 'groq') return 1_000;
+  if (providerName.startsWith('gemini_')) return 1_000;
+  if (providerName.startsWith('cloudflare')) return 500;
+  return 1_000;
 }
 
 function providerReadyAt(providerName) {
-  return Math.max(
-    providerCooldowns.get(providerName) || 0,
-    providerFamilyCooldowns.get(providerFamily(providerName)) || 0,
-  );
+  return providerCooldowns.get(providerName) || 0;
 }
 
 function parseRetryAfter(value, now = Date.now()) {
@@ -78,10 +71,9 @@ export function getProviderRetryDelayMs({ status, headers, body = '', now = Date
 
 function applyProviderCooldown(providerName, delayMs) {
   if (delayMs > 0) {
-    const readyAt = Date.now() + delayMs;
+    const cappedDelay = Math.min(delayMs, 60_000);
+    const readyAt = Date.now() + cappedDelay;
     providerCooldowns.set(providerName, Math.max(providerCooldowns.get(providerName) || 0, readyAt));
-    const family = providerFamily(providerName);
-    providerFamilyCooldowns.set(family, Math.max(providerFamilyCooldowns.get(family) || 0, readyAt));
   }
 }
 
@@ -152,27 +144,8 @@ async function recordKeyUsage(keyId, isRateLimit = false, isError = false, coold
   }
 }
 
-async function restorePersistedCooldowns(providerNames) {
-  try {
-    if (!AiKeyUsage) return;
-    const now = new Date();
-    const records = await AiKeyUsage.find({
-      keyIdentifier: { $in: providerNames },
-      cooldownUntil: { $gt: now },
-    })
-      .select('keyIdentifier cooldownUntil')
-      .lean();
-
-    for (const record of records) {
-      const readyAt = new Date(record.cooldownUntil).getTime();
-      const providerName = record.keyIdentifier;
-      providerCooldowns.set(providerName, Math.max(providerCooldowns.get(providerName) || 0, readyAt));
-      const family = providerFamily(providerName);
-      providerFamilyCooldowns.set(family, Math.max(providerFamilyCooldowns.get(family) || 0, readyAt));
-    }
-  } catch (e) {
-    // Non-fatal
-  }
+async function restorePersistedCooldowns() {
+  // Start clean on reboot so healthy fallback keys are never blocked by stale DB records
 }
 
 // Clean helper to safely extract JSON from LLM output (handles codeblocks ```json ... ```)
@@ -316,7 +289,7 @@ async function callCloudflare(apiKey, accountId, prompt, systemInstruction, time
     },
     body: JSON.stringify({
       messages,
-      max_tokens: 3000,
+      max_tokens: 8000,
     }),
     signal: AbortSignal.timeout(timeoutMs),
   });
