@@ -493,6 +493,10 @@ export async function getAttemptState(req, res) {
 
     // Fetch questions in stored order
     const questions = await Question.find({ _id: { $in: attempt.questionIds } }).select('-correctOption -explanation').lean();
+    if (questions.length === 0 && attempt.status === 'in_progress') {
+      await TestAttempt.updateOne({ _id: attemptId }, { status: 'abandoned', abandonReason: 'questions_missing' });
+      return res.status(404).json({ error: 'This test session has expired because its questions are no longer available. Please start a new test.' });
+    }
     const idOrder = new Map(attempt.questionIds.map((id, idx) => [id.toString(), idx]));
     questions.sort((a, b) => (idOrder.get(a._id.toString()) ?? 0) - (idOrder.get(b._id.toString()) ?? 0));
 
@@ -1053,11 +1057,19 @@ export async function startTest(req, res) {
 
       const currentMcqQuestions = freshQuestions.filter((question) => question.type === 'mcq');
       const subjectiveQuestions = freshQuestions.filter((question) => question.type === 'short' || question.type === 'long');
-      attempt.totalQuestions = currentMcqQuestions.length;
-      if (subjectiveQuestions.length) attempt.subjectiveRequired = true;
-      await attempt.save();
 
-      return res.json({
+      if (currentMcqQuestions.length === 0 && subjectiveQuestions.length === 0) {
+        console.warn(`[startTest] Attempt ${attempt._id} has 0 valid questions in DB. Abandoning stale attempt.`);
+        attempt.status = 'abandoned';
+        attempt.abandonReason = 'questions_missing';
+        await attempt.save();
+        attempt = null;
+      } else {
+        attempt.totalQuestions = currentMcqQuestions.length;
+        if (subjectiveQuestions.length) attempt.subjectiveRequired = true;
+        await attempt.save();
+
+        return res.json({
         success: true, 
         attemptId: attempt._id, 
         testType: attempt.testType, 
@@ -1097,7 +1109,8 @@ export async function startTest(req, res) {
             firstAnsweredAt: answer.firstAnsweredAt,
             countsTowardLimit: answer.countsTowardLimit,
           }))
-      });
+        });
+      }
     }
 
     // 🚨 2. NAYA TEST LOGIC WITH CACHING, USER EXCLUSION & CONCURRENCY LOCKING 🚨
@@ -1995,6 +2008,13 @@ export async function startPaperTest(req, res) {
 
     if (attempt) {
       const questionDocs = await Question.find({ _id: { $in: attempt.questionIds } }).lean();
+      if (questionDocs.length === 0) {
+        console.warn(`[startPaperTest] Attempt ${attempt._id} has 0 valid questions in DB. Abandoning stale attempt.`);
+        attempt.status = 'abandoned';
+        attempt.abandonReason = 'questions_missing';
+        await attempt.save();
+        attempt = null;
+      } else {
       const questionOrder = new Map(attempt.questionIds.map((id, index) => [id.toString(), index]));
       questionDocs.sort((a, b) => questionOrder.get(a._id.toString()) - questionOrder.get(b._id.toString()));
       const safeQuestions = questionDocs.map((q, idx) => ({
@@ -2033,6 +2053,7 @@ export async function startPaperTest(req, res) {
         currentSection: attempt.currentSection,
         boardPatternSnapshot: attempt.boardPatternSnapshot,
       });
+      }
     }
 
     const config = await getResolvedBoardConfig(paper.boardCode);
