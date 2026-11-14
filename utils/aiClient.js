@@ -12,7 +12,7 @@ dotenv.config();
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
-const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.2-90b-vision-instruct';
+const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/muse-glimmer-30b';
 
 const providerCooldowns = new Map();
 const providerFamilyCooldowns = new Map();
