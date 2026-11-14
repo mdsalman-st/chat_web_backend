@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
 
 export function generateToken(userId) {
-  // Professional standard: 30 days session validity (no frequent logouts)
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  // Permanent Session: Token tab tak expire nahi hoga jab tak user khud Logout na kare
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET);
 }
 
 export function verifyToken(token) {
