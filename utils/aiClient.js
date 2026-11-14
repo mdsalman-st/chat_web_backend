@@ -9,7 +9,7 @@ dotenv.config();
  */
 
 // Model Configurations
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
 const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/muse-glimmer-30b';
@@ -469,9 +469,9 @@ export async function executeAiJsonWithFailover({
     providers.push({ name: 'cloudflare', fn: () => callCloudflare(cfKey, cfAccount, prompt, systemInstruction, timeoutMs) });
   }
 
-  // 4. NVIDIA NIM (Bulk & Heavy Batching)
-  if (nvidiaKey) {
-    providers.push({ name: 'nvidia', fn: () => callNvidia(nvidiaKey, prompt, systemInstruction, Math.min(timeoutMs, 12000)) });
+  // 4. NVIDIA NIM (Disabled by default to avoid slow timeout locks; enable via ENABLE_NVIDIA=true)
+  if (nvidiaKey && process.env.ENABLE_NVIDIA === 'true') {
+    providers.push({ name: 'nvidia', fn: () => callNvidia(nvidiaKey, prompt, systemInstruction, Math.min(timeoutMs, 10000)) });
   }
 
   const errors = [];
