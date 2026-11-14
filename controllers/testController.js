@@ -1168,6 +1168,13 @@ export async function startTest(req, res) {
 
     // --- CACHE HIT: If we have enough questions, return them immediately ---
     const mcqQuestionsAvailable = questions.filter((q) => q.type === 'mcq');
+    let mcqQuestions = [];
+    let subjectiveQuestions = [];
+    let questionTargets = {
+      mcq: requiredMcqCount,
+      short: activePattern.hasShortAnswer ? (Number(activePattern.shortCount) || 0) : 0,
+      long: activePattern.hasLongAnswer ? (Number(activePattern.longCount) || 0) : 0,
+    };
     
     if (mcqQuestionsAvailable.length >= requiredMcqCount) {
       // We have enough cached questions - use them
@@ -1180,12 +1187,12 @@ export async function startTest(req, res) {
         short: Math.max(0, Number(linkedJob?.targetShortCount ?? (activePattern.hasShortAnswer ? activePattern.shortCount : 0)) || 0),
         long: Math.max(0, Number(linkedJob?.targetLongCount ?? (activePattern.hasLongAnswer ? activePattern.longCount : 0)) || 0),
       };
-      const questionTargets = {
+      questionTargets = {
         mcq: requiredMcqCount,
         short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
         long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
       };
-      const mcqQuestions = questions.filter((question) => question.type === 'mcq')
+      mcqQuestions = questions.filter((question) => question.type === 'mcq')
         .slice(0, questionTargets.mcq);
       const shortQuestions = questions.filter((question) => question.type === 'short')
         .slice(0, questionTargets.short);
@@ -1194,7 +1201,7 @@ export async function startTest(req, res) {
       if (isMcqPractice && mcqQuestions.length < Math.min(3, MCQ_PRACTICE_QUESTION_COUNT)) {
         return res.status(409).json({ error: 'At least three MCQs must be ready before starting chapter practice.' });
       }
-      const subjectiveQuestions = [...shortQuestions, ...longQuestions];
+      subjectiveQuestions = [...shortQuestions, ...longQuestions];
       questions = [...mcqQuestions, ...subjectiveQuestions];
     } else {
       // --- CACHE MISS: Need to generate questions ---
@@ -1268,12 +1275,12 @@ export async function startTest(req, res) {
         short: Math.max(0, Number(linkedJob?.targetShortCount ?? (activePattern.hasShortAnswer ? activePattern.shortCount : 0)) || 0),
         long: Math.max(0, Number(linkedJob?.targetLongCount ?? (activePattern.hasLongAnswer ? activePattern.longCount : 0)) || 0),
       };
-      const questionTargets = {
+      questionTargets = {
         mcq: requiredMcqCount,
         short: configuredTargets.short || questions.filter((question) => question.type === 'short').length,
         long: configuredTargets.long || questions.filter((question) => question.type === 'long').length,
       };
-      const mcqQuestions = questions.filter((question) => question.type === 'mcq')
+      mcqQuestions = questions.filter((question) => question.type === 'mcq')
         .slice(0, questionTargets.mcq);
       const shortQuestions = questions.filter((question) => question.type === 'short')
         .slice(0, questionTargets.short);
@@ -1282,7 +1289,7 @@ export async function startTest(req, res) {
       if (isMcqPractice && mcqQuestions.length < Math.min(3, MCQ_PRACTICE_QUESTION_COUNT)) {
         return res.status(409).json({ error: 'At least three MCQs must be ready before starting chapter practice.' });
       }
-      const subjectiveQuestions = [...shortQuestions, ...longQuestions];
+      subjectiveQuestions = [...shortQuestions, ...longQuestions];
       questions = [...mcqQuestions, ...subjectiveQuestions];
     }
 
