@@ -492,6 +492,20 @@ async function runGenerationAndVerification(job) {
     counts[nextBatch.stage] = await countQuestions(scope, nextBatch.stage);
     const emptyBatchCount = inserted ? 0 : (Number(job.emptyBatchCount) || 0) + 1;
     if (emptyBatchCount >= MAX_EMPTY_BATCHES) {
+      if (counts.mcq >= 3) {
+        console.log(`[QuestionGeneration] Job ${job._id} has ${counts.mcq} questions ready. Marking completed.`);
+        await GenerationJob.updateOne({ _id: job._id }, {
+          $set: {
+            status: 'completed',
+            progressPercent: 100,
+            progressMessage: `Questions are ready (${counts.mcq} MCQs).`,
+            completedAt: new Date(),
+            workerLeaseUntil: null,
+            error: null,
+          }
+        });
+        return;
+      }
       throw new Error(`Could not create distinct, valid ${nextBatch.stage} questions after ${MAX_EMPTY_BATCHES} AI batches.`);
     }
     await updateJobProgress(job, nextBatch.stage, counts, targets, emptyBatchCount);
