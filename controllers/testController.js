@@ -30,6 +30,7 @@ import {
   getSubjectsForClass,
   getChapterForMedium,
   getChaptersForSubject,
+  getChapterPracticePattern,
 } from '../utils/boardEngine.js';
 import { chapterTitleForMedium, normalizeMedium } from '../utils/medium.js';
 import {
@@ -295,7 +296,7 @@ export async function prepareChapterQuestions(req, res) {
     if (!medium) return res.status(400).json({ error: 'Unsupported medium' });
 
     const boardConfig = await getResolvedBoardConfig(boardCode);
-    const pattern = boardConfig.paperPattern || {};
+    const pattern = getChapterPracticePattern(boardConfig);
     const targetCount = Math.max(0, Number(pattern.mcqCount) || 0);
     const targetShortCount = pattern.hasShortAnswer ? Math.max(0, Number(pattern.shortCount) || 0) : 0;
     const targetLongCount = pattern.hasLongAnswer ? Math.max(0, Number(pattern.longCount) || 0) : 0;
@@ -991,10 +992,11 @@ export async function startTest(req, res) {
 
     // Get board pattern for this attempt
     const config = await getResolvedBoardConfig(boardCode);
-    const pattern = config.paperPattern || {};
+    const fullPaperPattern = config.paperPattern || {};
+    const chapterPracticePattern = getChapterPracticePattern(config);
     const activePattern = isMcqPractice
       ? {
-        ...pattern,
+        ...chapterPracticePattern,
         mcqCount: MCQ_PRACTICE_QUESTION_COUNT,
         attemptLimit: MCQ_PRACTICE_QUESTION_COUNT,
         marksPerMcq: 1,
@@ -1010,7 +1012,7 @@ export async function startTest(req, res) {
         longAttemptLimit: 0,
         totalMarks: MCQ_PRACTICE_QUESTION_COUNT,
       }
-      : pattern;
+      : (testType === 'chapter_practice' ? chapterPracticePattern : fullPaperPattern);
 
     // 🚨 1. RESUME LOGIC - Exact match on attempt identity 🚨
     const attemptQuery = {

@@ -137,6 +137,10 @@ const boardConfigSchema = new mongoose.Schema(
       type: paperPatternSchema,
       default: () => ({}),
     },
+    chapterWisePattern: {
+      type: paperPatternSchema,
+      default: null,
+    },
     customSettings: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

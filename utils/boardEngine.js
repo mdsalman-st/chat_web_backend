@@ -228,3 +228,105 @@ export async function getChaptersForSubject({
     usedFallbackChapters,
   };
 }
+
+/**
+ * 40-Marks Chapter-wise Practice Test Pattern per Board
+ * Tailors MCQ, Short and Long question targets and attempt limits so total score is 40 Marks.
+ */
+export function getChapterPracticePattern(boardConfig) {
+  if (boardConfig?.chapterWisePattern && Number(boardConfig.chapterWisePattern.totalMarks) > 0) {
+    return boardConfig.chapterWisePattern;
+  }
+
+  const code = String(boardConfig?.code || '').toLowerCase().trim();
+
+  if (code === 'bseb') {
+    // BSEB Chapter Practice (40 Marks with double choice):
+    // 40 MCQs given, student solves 20 = 20 Marks
+    // 10 Short (2-marks) given, student solves 5 = 10 Marks
+    // 4 Long (5-marks) given, student solves 2 = 10 Marks
+    // Total evaluated = 40 Marks (Duration 45 mins)
+    return {
+      mcqCount: 40,
+      attemptLimit: 20,
+      marksPerMcq: 1,
+      durationMinutes: 45,
+      negativeMarking: 0,
+      optionsCount: 4,
+      hasShortAnswer: true,
+      shortCount: 10,
+      shortAttemptLimit: 5,
+      shortMarks: 2,
+      hasLongAnswer: true,
+      longCount: 4,
+      longAttemptLimit: 2,
+      longMarks: 5,
+      totalMarks: 40,
+    };
+  }
+
+  if (code === 'cbse') {
+    // CBSE Chapter Practice (40 Marks):
+    // 20 MCQs given, solve 20 = 20 Marks
+    // 6 Short (2-marks) given, solve 5 = 10 Marks
+    // 3 Long (5-marks) given, solve 2 = 10 Marks
+    // Total evaluated = 40 Marks (Duration 45 mins)
+    return {
+      mcqCount: 20,
+      attemptLimit: 20,
+      marksPerMcq: 1,
+      durationMinutes: 45,
+      negativeMarking: 0,
+      optionsCount: 4,
+      hasShortAnswer: true,
+      shortCount: 6,
+      shortAttemptLimit: 5,
+      shortMarks: 2,
+      hasLongAnswer: true,
+      longCount: 3,
+      longAttemptLimit: 2,
+      longMarks: 5,
+      totalMarks: 40,
+    };
+  }
+
+  if (code === 'up_board') {
+    // UP Board Chapter Practice (40 Marks):
+    return {
+      mcqCount: 20,
+      attemptLimit: 20,
+      marksPerMcq: 1,
+      durationMinutes: 45,
+      negativeMarking: 0,
+      optionsCount: 4,
+      hasShortAnswer: true,
+      shortCount: 6,
+      shortAttemptLimit: 5,
+      shortMarks: 2,
+      hasLongAnswer: true,
+      longCount: 3,
+      longAttemptLimit: 2,
+      longMarks: 5,
+      totalMarks: 40,
+    };
+  }
+
+  // Default / Other Boards (40 Marks standard):
+  return {
+    mcqCount: 20,
+    attemptLimit: 20,
+    marksPerMcq: 1,
+    durationMinutes: 45,
+    negativeMarking: 0,
+    optionsCount: 4,
+    hasShortAnswer: true,
+    shortCount: 6,
+    shortAttemptLimit: 5,
+    shortMarks: 2,
+    hasLongAnswer: true,
+    longCount: 3,
+    longAttemptLimit: 2,
+    longMarks: 5,
+    totalMarks: 40,
+  };
+}

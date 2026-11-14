@@ -31,6 +31,11 @@ const BOARDS_DATA = [
       hasShortAnswer: true, shortCount: 10, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.ncert_default.shortAttemptLimit, shortMarks: 2,
       hasLongAnswer: true, longCount: 4, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.ncert_default.longAttemptLimit, longMarks: 5, totalMarks: 80,
     },
+    chapterWisePattern: {
+      mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 45, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 6, shortAttemptLimit: 5, shortMarks: 2,
+      hasLongAnswer: true, longCount: 3, longAttemptLimit: 2, longMarks: 5, totalMarks: 40,
+    },
     classes: [
       {
         classLevel: '9', name: 'Class 9', hindiName: 'कक्षा 9', hasStreams: false, order: 1,
@@ -162,6 +167,11 @@ const BOARDS_DATA = [
       hasShortAnswer: true, shortCount: 30, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.bseb.shortAttemptLimit, shortMarks: 2,
       hasLongAnswer: true, longCount: 8, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.bseb.longAttemptLimit, longMarks: 5, totalMarks: 100,
     },
+    chapterWisePattern: {
+      mcqCount: 40, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 45, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 10, shortAttemptLimit: 5, shortMarks: 2,
+      hasLongAnswer: true, longCount: 4, longAttemptLimit: 2, longMarks: 5, totalMarks: 40,
+    },
     classes: [
       {
         classLevel: '10', name: 'Matric (Class 10)', hindiName: 'मैट्रिक (कक्षा 10)', hasStreams: false, order: 1,
@@ -244,6 +254,11 @@ const BOARDS_DATA = [
       hasShortAnswer: true, shortCount: 15, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.cbse.shortAttemptLimit, shortMarks: 2,
       hasLongAnswer: true, longCount: 6, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.cbse.longAttemptLimit, longMarks: 5, totalMarks: 80,
     },
+    chapterWisePattern: {
+      mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 45, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 6, shortAttemptLimit: 5, shortMarks: 2,
+      hasLongAnswer: true, longCount: 3, longAttemptLimit: 2, longMarks: 5, totalMarks: 40,
+    },
     classes: [
       {
         classLevel: '10', name: 'Class 10', hindiName: 'कक्षा 10', hasStreams: false, order: 1,
@@ -320,6 +335,11 @@ const BOARDS_DATA = [
       mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 195, negativeMarking: 0, optionsCount: 4,
       hasShortAnswer: true, shortCount: 10, shortAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.up_board.shortAttemptLimit, shortMarks: 2,
       hasLongAnswer: true, longCount: 5, longAttemptLimit: BOARD_SUBJECTIVE_ATTEMPT_LIMITS.up_board.longAttemptLimit, longMarks: 6, totalMarks: 70,
+    },
+    chapterWisePattern: {
+      mcqCount: 20, attemptLimit: 20, marksPerMcq: 1, durationMinutes: 45, negativeMarking: 0, optionsCount: 4,
+      hasShortAnswer: true, shortCount: 6, shortAttemptLimit: 5, shortMarks: 2,
+      hasLongAnswer: true, longCount: 3, longAttemptLimit: 2, longMarks: 5, totalMarks: 40,
     },
     classes: [
       {
