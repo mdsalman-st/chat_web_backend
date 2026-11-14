@@ -4,29 +4,37 @@ import AiKeyUsage from '../models/AiKeyUsage.js';
 dotenv.config();
 
 /**
- * AI Provider Service with Smart Failover & Correct Models
+ * AI Provider Service with Multi-Provider Failover & New Model Support
+ * Providers: Groq, Gemini (3 keys), Cloudflare Workers AI, NVIDIA NIM
  */
 
-// ✅ Sahi aur Naye Models
-const GEMINI_MODEL = 'gemini-3.8-flash'; 
-const GROQ_MODEL = 'openai/gpt-oss-120b'; 
+// Model Configurations
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+const CLOUDFLARE_MODEL = process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.2-90b-vision-instruct';
+
 const providerCooldowns = new Map();
 const providerFamilyCooldowns = new Map();
 const providerTokenAverages = new Map();
 let nextProviderIndex = 0;
 const MAX_INLINE_COOLDOWN_WAIT_MS = 10_000;
+const TIMEOUT_MS = 60000; // 60s for question generation
 
 function providerFamily(providerName) {
-  return providerName.startsWith('gemini_') ? 'gemini' : providerName;
+  if (providerName.startsWith('gemini_')) return 'gemini';
+  if (providerName.startsWith('cloudflare')) return 'cloudflare';
+  if (providerName.startsWith('nvidia')) return 'nvidia';
+  return providerName;
 }
 
 function providerMinIntervalMs(providerName) {
-  const variable = providerFamily(providerName) === 'gemini'
-    ? 'AI_GEMINI_MIN_INTERVAL_MS'
-    : 'AI_GROQ_MIN_INTERVAL_MS';
-  const configured = Number(process.env[variable]);
-  if (Number.isFinite(configured) && configured >= 0) return configured;
-  return providerFamily(providerName) === 'gemini' ? 7_000 : 3_000;
+  const family = providerFamily(providerName);
+  if (family === 'gemini') return Number(process.env.AI_GEMINI_MIN_INTERVAL_MS) || 7_000;
+  if (family === 'groq') return Number(process.env.AI_GROQ_MIN_INTERVAL_MS) || 3_000;
+  if (family === 'cloudflare') return Number(process.env.AI_CLOUDFLARE_MIN_INTERVAL_MS) || 1_000;
+  if (family === 'nvidia') return Number(process.env.AI_NVIDIA_MIN_INTERVAL_MS) || 2_000;
+  return 2_000;
 }
 
 function providerReadyAt(providerName) {
@@ -126,6 +134,7 @@ function getTodayString() {
 
 async function recordKeyUsage(keyId, isRateLimit = false, isError = false, cooldownUntil = null) {
   try {
+    if (!AiKeyUsage) return;
     const today = getTodayString();
     const inc = { requestCount: 1 };
     if (isRateLimit) inc.rateLimitCount = 1;
@@ -139,31 +148,109 @@ async function recordKeyUsage(keyId, isRateLimit = false, isError = false, coold
       { upsert: true }
     );
   } catch (error) {
-    console.error(`[AiClient] Failed to persist usage for ${keyId}:`, error);
+    // Non-fatal logging
   }
 }
 
 async function restorePersistedCooldowns(providerNames) {
-  const now = new Date();
-  const records = await AiKeyUsage.find({
-    keyIdentifier: { $in: providerNames },
-    cooldownUntil: { $gt: now },
-  })
-    .select('keyIdentifier cooldownUntil')
-    .lean();
+  try {
+    if (!AiKeyUsage) return;
+    const now = new Date();
+    const records = await AiKeyUsage.find({
+      keyIdentifier: { $in: providerNames },
+      cooldownUntil: { $gt: now },
+    })
+      .select('keyIdentifier cooldownUntil')
+      .lean();
 
-  for (const record of records) {
-    const readyAt = new Date(record.cooldownUntil).getTime();
-    const providerName = record.keyIdentifier;
-    providerCooldowns.set(providerName, Math.max(providerCooldowns.get(providerName) || 0, readyAt));
-    const family = providerFamily(providerName);
-    providerFamilyCooldowns.set(family, Math.max(providerFamilyCooldowns.get(family) || 0, readyAt));
+    for (const record of records) {
+      const readyAt = new Date(record.cooldownUntil).getTime();
+      const providerName = record.keyIdentifier;
+      providerCooldowns.set(providerName, Math.max(providerCooldowns.get(providerName) || 0, readyAt));
+      const family = providerFamily(providerName);
+      providerFamilyCooldowns.set(family, Math.max(providerFamilyCooldowns.get(family) || 0, readyAt));
+    }
+  } catch (e) {
+    // Non-fatal
   }
 }
 
-// 🚨 Timeout 60 seconds (taaki heavy questions generate ho sakein)
-const TIMEOUT_MS = 60000; 
+// Clean helper to safely extract JSON from LLM output (handles codeblocks ```json ... ```)
+function extractJson(text) {
+  if (!text) throw new Error('AI returned empty response');
+  const clean = String(text).trim();
+  try {
+    return JSON.parse(clean);
+  } catch {
+    const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match && match[1]) {
+      return JSON.parse(match[1].trim());
+    }
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+    }
+    const firstBracket = clean.indexOf('[');
+    const lastBracket = clean.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
+    }
+    throw new Error(`Failed to parse AI response as JSON: ${clean.slice(0, 150)}`);
+  }
+}
 
+// ==========================================
+// 1. GROQ PROVIDER
+// ==========================================
+async function callGroq(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_MS) {
+  const url = 'https://api.groq.com/openai/v1/chat/completions';
+  const messages = [];
+  if (systemInstruction) {
+    messages.push({ role: 'system', content: systemInstruction });
+  }
+  messages.push({ role: 'user', content: prompt });
+
+  const res = await fetchFromProvider('groq', url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages,
+      response_format: { type: 'json_object' },
+      temperature: 0.2,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    const isRateLimit = res.status === 429;
+    const retryAfterMs = getProviderRetryDelayMs({ status: res.status, headers: res.headers, body: errText });
+    applyProviderCooldown('groq', retryAfterMs);
+    await recordKeyUsage('groq', isRateLimit, true, retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null);
+    throw createProviderError(
+      isRateLimit ? 'Groq Rate Limit (429)' : `Groq HTTP ${res.status}: ${errText.slice(0, 150)}`,
+      res.status,
+      retryAfterMs,
+    );
+  }
+
+  const data = await res.json();
+  const usageTokens = Number(data.usage?.total_tokens) || 1;
+  await recordGroqQuotaCooldown(res.headers, usageTokens);
+  await recordKeyUsage('groq', false, false);
+
+  const text = data.choices?.[0]?.message?.content;
+  return extractJson(text);
+}
+
+// ==========================================
+// 2. GEMINI PROVIDER (with 3-key failover)
+// ==========================================
 async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction, timeoutMs = TIMEOUT_MS) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
@@ -191,12 +278,7 @@ async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction, time
     const isRateLimit = res.status === 429;
     const retryAfterMs = getProviderRetryDelayMs({ status: res.status, headers: res.headers, body: errText });
     applyProviderCooldown(keyIdentifier, retryAfterMs);
-    await recordKeyUsage(
-      keyIdentifier,
-      isRateLimit,
-      true,
-      retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null,
-    );
+    await recordKeyUsage(keyIdentifier, isRateLimit, true, retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null);
     throw createProviderError(
       isRateLimit
         ? `Gemini ${keyIdentifier} Rate Limit (429)`
@@ -210,31 +292,31 @@ async function callGemini(apiKey, keyIdentifier, prompt, systemInstruction, time
   await recordKeyUsage(keyIdentifier, false, false);
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error(`Gemini ${keyIdentifier} returned empty content`);
-
-  return JSON.parse(text);
+  return extractJson(text);
 }
 
-async function callGroq(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_MS) {
-  const url = 'https://api.groq.com/openai/v1/chat/completions';
-
+// ==========================================
+// 3. CLOUDFLARE WORKERS AI PROVIDER
+// ==========================================
+async function callCloudflare(apiKey, accountId, prompt, systemInstruction, timeoutMs = TIMEOUT_MS) {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${CLOUDFLARE_MODEL}`;
   const messages = [];
   if (systemInstruction) {
-    messages.push({ role: 'system', content: systemInstruction });
+    messages.push({ role: 'system', content: systemInstruction + '\nOutput ONLY strictly valid JSON. Do not write explanations.' });
+  } else {
+    messages.push({ role: 'system', content: 'Output ONLY strictly valid JSON.' });
   }
   messages.push({ role: 'user', content: prompt });
 
-  const res = await fetchFromProvider('groq', url, {
+  const res = await fetchFromProvider('cloudflare', url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: GROQ_MODEL,
       messages,
-      response_format: { type: 'json_object' },
-      temperature: 0.2,
+      max_tokens: 3000,
     }),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -243,31 +325,69 @@ async function callGroq(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_M
     const errText = await res.text();
     const isRateLimit = res.status === 429;
     const retryAfterMs = getProviderRetryDelayMs({ status: res.status, headers: res.headers, body: errText });
-    applyProviderCooldown('groq', retryAfterMs);
-    await recordKeyUsage(
-      'groq',
-      isRateLimit,
-      true,
-      retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null,
-    );
+    applyProviderCooldown('cloudflare', retryAfterMs);
+    await recordKeyUsage('cloudflare', isRateLimit, true, retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null);
     throw createProviderError(
-      isRateLimit ? 'Groq Rate Limit (429)' : `Groq HTTP ${res.status}: ${errText.slice(0, 150)}`,
+      isRateLimit ? 'Cloudflare AI Rate Limit (429)' : `Cloudflare AI HTTP ${res.status}: ${errText.slice(0, 150)}`,
       res.status,
       retryAfterMs,
     );
   }
 
   const data = await res.json();
-  const usageTokens = Number(data.usage?.total_tokens) || 1;
-  await recordGroqQuotaCooldown(res.headers, usageTokens);
-  await recordKeyUsage('groq', false, false);
-
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) throw new Error('Groq returned empty content');
-
-  return JSON.parse(text);
+  await recordKeyUsage('cloudflare', false, false);
+  const text = data.result?.response || data.result?.choices?.[0]?.message?.content || JSON.stringify(data.result);
+  return extractJson(text);
 }
 
+// ==========================================
+// 4. NVIDIA NIM PROVIDER
+// ==========================================
+async function callNvidia(apiKey, prompt, systemInstruction, timeoutMs = TIMEOUT_MS) {
+  const url = 'https://integrate.api.nvidia.com/v1/chat/completions';
+  const messages = [];
+  if (systemInstruction) {
+    messages.push({ role: 'system', content: systemInstruction + '\nOutput ONLY valid JSON.' });
+  }
+  messages.push({ role: 'user', content: prompt });
+
+  const res = await fetchFromProvider('nvidia', url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: NVIDIA_MODEL,
+      messages,
+      temperature: 0.2,
+      max_tokens: 4000,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    const isRateLimit = res.status === 429;
+    const retryAfterMs = getProviderRetryDelayMs({ status: res.status, headers: res.headers, body: errText });
+    applyProviderCooldown('nvidia', retryAfterMs);
+    await recordKeyUsage('nvidia', isRateLimit, true, retryAfterMs > 0 ? new Date(Date.now() + retryAfterMs) : null);
+    throw createProviderError(
+      isRateLimit ? 'NVIDIA NIM Rate Limit (429)' : `NVIDIA NIM HTTP ${res.status}: ${errText.slice(0, 150)}`,
+      res.status,
+      retryAfterMs,
+    );
+  }
+
+  const data = await res.json();
+  await recordKeyUsage('nvidia', false, false);
+  const text = data.choices?.[0]?.message?.content;
+  return extractJson(text);
+}
+
+// ==========================================
+// 5. GEMINI VISION (OCR for Handwriting)
+// ==========================================
 async function callGeminiVision(apiKey, keyIdentifier, imageBase64, mimeType, prompt, systemInstruction) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
@@ -289,7 +409,7 @@ async function callGeminiVision(apiKey, keyIdentifier, imageBase64, mimeType, pr
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30000), 
+    signal: AbortSignal.timeout(30000),
   });
 
   if (res.status === 429) {
@@ -307,13 +427,15 @@ async function callGeminiVision(apiKey, keyIdentifier, imageBase64, mimeType, pr
   await recordKeyUsage(keyIdentifier, false, false);
 
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error(`Gemini Vision ${keyIdentifier} returned empty content`);
-
-  return JSON.parse(text);
+  return extractJson(text);
 }
 
+// ==========================================
+// UNIFIED EXECUTION FUNCTIONS
+// ==========================================
+
 /**
- * Unified AI JSON caller with SMART failover rotation
+ * Unified AI JSON caller with SMART failover rotation across all available models
  */
 export async function executeAiJsonWithFailover({
   prompt,
@@ -322,18 +444,33 @@ export async function executeAiJsonWithFailover({
   timeoutMs = TIMEOUT_MS,
 }) {
   const providers = [];
+  const groq = process.env.GROQ_KEY;
   const gemini1 = process.env.GEMINI_KEY_1;
   const gemini2 = process.env.GEMINI_KEY_2;
   const gemini3 = process.env.GEMINI_KEY_3;
-  const groq = process.env.GROQ_KEY;
+  const cfKey = process.env.CLOUDFLARE_API_KEY;
+  const cfAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const nvidiaKey = process.env.NVIDIA_NIM_API_KEY;
 
+  // 1. Groq (Fastest & Reliable)
   if (groq) {
     providers.push({ name: 'groq', fn: () => callGroq(groq, prompt, systemInstruction, timeoutMs) });
   }
-  
+
+  // 2. Gemini Multi-Keys (Smart & High Context)
   if (gemini1) providers.push({ name: 'gemini_1', fn: () => callGemini(gemini1, 'gemini_1', prompt, systemInstruction, timeoutMs) });
   if (gemini2) providers.push({ name: 'gemini_2', fn: () => callGemini(gemini2, 'gemini_2', prompt, systemInstruction, timeoutMs) });
   if (gemini3) providers.push({ name: 'gemini_3', fn: () => callGemini(gemini3, 'gemini_3', prompt, systemInstruction, timeoutMs) });
+
+  // 3. Cloudflare Workers AI (Free Emergency Backup)
+  if (cfKey && cfAccount) {
+    providers.push({ name: 'cloudflare', fn: () => callCloudflare(cfKey, cfAccount, prompt, systemInstruction, timeoutMs) });
+  }
+
+  // 4. NVIDIA NIM (Bulk & Heavy Batching)
+  if (nvidiaKey) {
+    providers.push({ name: 'nvidia', fn: () => callNvidia(nvidiaKey, prompt, systemInstruction, timeoutMs) });
+  }
 
   const errors = [];
   if (!providers.length) {
@@ -342,21 +479,23 @@ export async function executeAiJsonWithFailover({
     throw error;
   }
 
-  await restorePersistedCooldowns(providers.map((provider) => provider.name));
+  await restorePersistedCooldowns(providers.map((p) => p.name));
   let now = Date.now();
-  let availableProviders = providers.filter((provider) => providerReadyAt(provider.name) <= now);
+  let availableProviders = providers.filter((p) => providerReadyAt(p.name) <= now);
+
   if (!availableProviders.length) {
-    const earliestReadyAt = Math.min(...providers.map((provider) => providerReadyAt(provider.name)));
+    const earliestReadyAt = Math.min(...providers.map((p) => providerReadyAt(p.name)));
     const waitMs = earliestReadyAt - now;
     if (waitMs > 0 && waitMs <= MAX_INLINE_COOLDOWN_WAIT_MS) {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       now = Date.now();
-      availableProviders = providers.filter((provider) => providerReadyAt(provider.name) <= now);
+      availableProviders = providers.filter((p) => providerReadyAt(p.name) <= now);
     }
   }
+
   if (!availableProviders.length) {
     const retryAfterMs = Math.max(1_000, Math.min(
-      ...providers.map((provider) => providerReadyAt(provider.name) - now),
+      ...providers.map((p) => providerReadyAt(p.name) - now),
     ));
     const error = new Error('All AI providers are cooling down after rate limits or temporary outages.');
     error.status = 503;
@@ -364,6 +503,7 @@ export async function executeAiJsonWithFailover({
     throw error;
   }
 
+  // Fair Round-Robin Rotation
   const rotationStart = nextProviderIndex % providers.length;
   const orderedProviders = [...availableProviders].sort((a, b) => {
     const aIndex = (providers.indexOf(a) - rotationStart + providers.length) % providers.length;
@@ -377,11 +517,12 @@ export async function executeAiJsonWithFailover({
     if (waitMs > 0) {
       errors.push({
         name: provider.name,
-        message: 'Provider request paced to stay within its rate limit.',
+        message: 'Provider request paced to stay within rate limit.',
         retryAfterMs: waitMs,
       });
       continue;
     }
+
     try {
       console.log(`🤖 Invoking AI provider: ${provider.name} for task: ${taskType}`);
       const result = await provider.fn();
@@ -390,25 +531,25 @@ export async function executeAiJsonWithFailover({
     } catch (err) {
       console.warn(`⚠️ Provider ${provider.name} failed: ${err.message}.`);
       errors.push({ name: provider.name, message: err.message, retryAfterMs: err.retryAfterMs || 0 });
-      
-      if (orderedProviders.slice(i + 1).some((nextProvider) => providerReadyAt(nextProvider.name) <= Date.now())) {
+
+      if (orderedProviders.slice(i + 1).some((next) => providerReadyAt(next.name) <= Date.now())) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
   }
 
   nextProviderIndex = (rotationStart + 1) % providers.length;
-  const retryDelays = errors.map((error) => error.retryAfterMs).filter((delay) => delay > 0);
+  const retryDelays = errors.map((e) => e.retryAfterMs).filter((d) => d > 0);
   const retryAfterMs = retryDelays.length ? Math.min(...retryDelays) : 0;
-  const friendlyError = new Error('The AI question engine is experiencing high demand right now. Please try again in a little while.');
-  friendlyError.details = errors.map((error) => `${error.name}: ${error.message}`);
+  const friendlyError = new Error('The AI question engine is experiencing high demand right now. Please try again shortly.');
+  friendlyError.details = errors.map((e) => `${e.name}: ${e.message}`);
   friendlyError.status = 503;
   friendlyError.retryAfterMs = retryAfterMs;
   throw friendlyError;
 }
 
 /**
- * Unified AI Vision JSON caller with failover
+ * Unified AI Vision JSON caller with failover (for Answer sheet handwriting OCR)
  */
 export async function executeGeminiVisionWithFailover({ imageBase64, mimeType = 'image/jpeg', prompt, systemInstruction = '' }) {
   const gemini1 = process.env.GEMINI_KEY_1;
@@ -426,13 +567,13 @@ export async function executeGeminiVisionWithFailover({ imageBase64, mimeType = 
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
     try {
-      console.log(`🤖 Invoking Vision AI: ${provider.name}`);
+      console.log(`👁️ Invoking Vision AI: ${provider.name}`);
       const result = await provider.fn();
       return { result, providerName: provider.name };
     } catch (err) {
       console.warn(`⚠️ Vision provider ${provider.name} failed: ${err.message}.`);
       errors.push(`${provider.name}: ${err.message}`);
-      if (i < providers.length - 1) await new Promise(r => setTimeout(r, 1500));
+      if (i < providers.length - 1) await new Promise((r) => setTimeout(r, 1500));
     }
   }
 
