@@ -20,6 +20,7 @@ import adminRoute from './routes/admin.js';
 import adminPaperRoutes from './routes/adminPaperRoutes.js';
 import superAdminPaperRoutes from './routes/superAdminPaperRoutes.js';
 import adminExtrasRoutes from './routes/adminExtras.js';
+import feedbackRoute from './routes/feedback.js';
 import { startQuestionGenerationWorker } from './services/questionGenerator.js';
 import { startSubjectiveEvaluationWorker } from './services/handwritingEvaluator.js';
 
@@ -119,6 +120,7 @@ app.use('/api/tasks', taskRoute);
 app.use('/api/notes', noteRoute);
 app.use('/api/tests', testRoute);
 app.use('/api/subjective', subjectiveRoute);
+app.use('/api/feedback', feedbackRoute);
 
 // 👇 YAHAN NAYE ROUTES ADD KIYE HAIN 👇
 app.use('/api/admin/papers', adminPaperRoutes);
