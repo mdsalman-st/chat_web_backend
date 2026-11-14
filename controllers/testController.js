@@ -1245,7 +1245,7 @@ export async function startTest(req, res) {
               questions = refreshedQuestions;
               break;
             }
-            return res.status(503).json({ error: 'Not enough questions generated yet. Please try again in a moment.' });
+            return res.status(503).json({ error: 'Question generation is temporarily unavailable. The AI providers are busy or rate-limited right now. Please try again in a moment.' });
           } else if (currentJob && currentJob.status === 'failed') {
             return res.status(503).json({ error: 'Question generation failed. Please try again later.' });
           }
@@ -1254,7 +1254,7 @@ export async function startTest(req, res) {
         // Final check after polling
         const finalMcqQuestions = questions.filter(q => q.type === 'mcq');
         if (finalMcqQuestions.length < requiredMcqCount) {
-          return res.status(503).json({ error: 'Not enough questions generated yet. Please try again in a moment.' });
+          return res.status(503).json({ error: 'Question generation is temporarily unavailable. The AI providers are busy or rate-limited right now. Please try again in a moment.' });
         }
       }
 
